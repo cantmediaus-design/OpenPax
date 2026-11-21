@@ -136,6 +136,12 @@ rustflags = ["-Clinker-flavor=ld.lld", "-Clink-self-contained=yes", "-Clink-arg=
 The core, paint and model crates are headless on purpose, so editing logic can be unit tested
 without a window.
 
+## Support cancer research
+
+OpenPax is free. If you make money with it, please donate 50% of your profits from it to the
+[German Cancer Research Center (DKFZ)](https://www.dkfz.de/en/donations). This is a request,
+not a licence condition.
+
 ## Licence
 
 Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
