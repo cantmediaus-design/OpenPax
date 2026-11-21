@@ -86,6 +86,8 @@ pub struct App {
     pub(crate) versions: Versions,
     /// Versions whose default resources are already downloaded.
     pub(crate) vanilla_cached: HashSet<String>,
+    /// Whether the separate animation preview window is open.
+    pub(crate) preview_open: bool,
 }
 
 /// The texture editor in the active tab, if that tab is a texture.
@@ -186,7 +188,9 @@ impl App {
             job: None,
             versions: Versions::Idle,
             vanilla_cached: HashSet::new(),
+            preview_open: false,
         };
+        app.tools.load_brushes();
         // Open the pack given on the command line, else the last one if it is still there.
         if let Some(root) = initial_pack {
             app.open_pack(root);
@@ -730,6 +734,7 @@ impl App {
             | Command::ResetView => self.run_model(command),
             Command::OptimizeModel => self.start_optimize_model(),
             Command::OptimizePack => self.start_optimize_pack(),
+            Command::Pixel(command) => self.run_pixel(command, ctx),
         }
     }
 
@@ -742,6 +747,7 @@ impl App {
             Command::SelectAll => doc.select_all(),
             // Escape first abandons a stroke in progress, then clears the selection.
             Command::Deselect if doc.stroke_active() => doc.stroke_cancel(),
+            Command::Deselect if !editor.poly_points.is_empty() => editor.poly_points.clear(),
             Command::Deselect => doc.deselect(),
             Command::ClearSelection => doc.clear_selected(),
             Command::FlipHorizontal => doc.flip_horizontal(),
@@ -749,13 +755,14 @@ impl App {
             Command::ZoomIn => editor.zoom_step(1),
             Command::ZoomOut => editor.zoom_step(-1),
             Command::ZoomFit => editor.fit_pending = true,
-            Command::ToggleTiling => editor.tile_preview ^= true,
+            Command::ToggleTiling => self.tools.view.tiling = self.tools.view.tiling.next(),
             Command::ResizeCanvas => {
-                let dialog = Dialog::Resize {
+                let dialog = crate::pixel_dialogs::PixelDialog::Resize {
                     width: doc.width(),
                     height: doc.height(),
+                    anchor: (0.0, 0.0),
                 };
-                self.open_dialog(dialog);
+                self.open_pixel_dialog(dialog);
             }
             _ => {}
         }
@@ -981,7 +988,7 @@ impl App {
     // ---- layout ----
 
     /// A menu entry for a command, with its icon and shortcut.
-    fn menu_item(&mut self, ui: &mut egui::Ui, command: Command) {
+    pub(crate) fn menu_item(&mut self, ui: &mut egui::Ui, command: Command) {
         let mut button = egui::Button::new(widgets::icon_label(command.icon(), command.label()));
         if let Some(shortcut) = command.shortcut() {
             button = button.shortcut_text(ui.ctx().format_shortcut(&shortcut));
@@ -993,7 +1000,7 @@ impl App {
     }
 
     /// A checkable menu entry for a command that toggles something.
-    fn menu_toggle(&mut self, ui: &mut egui::Ui, command: Command, checked: bool) {
+    pub(crate) fn menu_toggle(&mut self, ui: &mut egui::Ui, command: Command, checked: bool) {
         let glyph = if checked { icons::CHECK } else { " " };
         let mut button = egui::Button::new(widgets::icon_label(glyph, command.label()));
         if let Some(shortcut) = command.shortcut() {
@@ -1033,6 +1040,7 @@ impl App {
                 ui.separator();
                 self.menu_item(ui, Command::NewTexture);
                 self.menu_item(ui, Command::NewModel);
+                self.pixel_file_menu(ui);
                 ui.separator();
                 self.menu_item(ui, Command::Save);
                 self.menu_item(ui, Command::SaveAll);
@@ -1081,9 +1089,12 @@ impl App {
                 }
             });
 
+            self.pixel_menus(ui);
+
             ui.menu_button("View", |ui| {
+                let tiling_on = self.tools.view.tiling != crate::texture_editor::Tiling::Off;
                 let (grid, tiling) = match self.active.and_then(|id| self.editors.get(&id)) {
-                    Some(Editor::Texture(editor)) => (editor.show_grid, editor.tile_preview),
+                    Some(Editor::Texture(editor)) => (editor.show_grid, tiling_on),
                     Some(Editor::Model(editor)) => (editor.show_grid, false),
                     _ => (false, false),
                 };
@@ -1190,9 +1201,10 @@ impl App {
                 ui.separator();
                 let (width, height) = (editor.doc.width(), editor.doc.height());
                 ui.monospace(format!("{width} × {height}"));
-                if let Some((x, y)) = editor.hover {
+                let status = editor.status_text();
+                if !status.is_empty() {
                     ui.separator();
-                    ui.monospace(format!("{x}, {y}"));
+                    ui.monospace(status);
                 }
                 if let Some(command) = run {
                     self.run(command, &ctx);
@@ -1543,6 +1555,17 @@ impl App {
         for notice in notices {
             self.set_status(Level::Warning, &notice);
         }
+        let texture_notices: Vec<&'static str> = self
+            .editors
+            .values_mut()
+            .filter_map(|editor| match editor {
+                Editor::Texture(texture) => texture.notice.take(),
+                _ => None,
+            })
+            .collect();
+        for notice in texture_notices {
+            self.warn(notice);
+        }
     }
 
     fn update_title(&mut self, ctx: &egui::Context) {
@@ -1606,6 +1629,7 @@ impl eframe::App for App {
             .show(ui, |ui| self.central(ui));
         self.layout.central = Some(central.response.rect);
 
+        self.show_preview(&ctx);
         self.show_dialog(&ctx);
         self.show_command_palette(&ctx);
         self.show_tour(&ctx);
@@ -1685,7 +1709,7 @@ impl TabViewer for Viewer<'_> {
     }
 
     fn allowed_in_windows(&self, _tab: &mut u64) -> bool {
-        false
+        true
     }
 
     fn scroll_bars(&self, _tab: &u64) -> [bool; 2] {

@@ -269,6 +269,7 @@ pub fn empty_state(ui: &mut egui::Ui, glyph: &str, title: &str, hint: &str) {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Edge {
+    Top,
     Bottom,
     Right,
 }
@@ -280,6 +281,7 @@ pub fn toolbar_background(ui: &egui::Ui, rect: Rect, line: Edge) {
     painter.rect_filled(rect, 0.0, tokens.toolbar);
     let stroke = Stroke::new(1.0, tokens.border);
     match line {
+        Edge::Top => painter.hline(rect.x_range(), rect.top() + 0.5, stroke),
         Edge::Bottom => painter.hline(rect.x_range(), rect.bottom() - 0.5, stroke),
         Edge::Right => painter.vline(rect.right() - 0.5, rect.y_range(), stroke),
     };

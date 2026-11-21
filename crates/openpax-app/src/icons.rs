@@ -131,6 +131,7 @@ pub const EYE_OFF: &str = "\u{E224}";
 pub const GRID: &str = "\u{E296}";
 pub const TILING: &str = "\u{E464}";
 pub const CARET_RIGHT: &str = "\u{E13A}";
+pub const CARET_LEFT: &str = "\u{E138}";
 pub const CARET_DOWN: &str = "\u{E136}";
 pub const INFO: &str = "\u{E2CE}";
 pub const WARNING: &str = "\u{E4E0}";

@@ -10,6 +10,7 @@ use eframe::egui::{Key, KeyboardShortcut, Modifiers};
 use openpax_paint::ToolKind;
 
 use crate::icons;
+use crate::pixel_cmds::PixelCmd;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Command {
@@ -67,6 +68,8 @@ pub enum Command {
     StartTour,
     About,
     Tool(ToolKind),
+    /// Texture-editor commands (image, layer, frame, filter...).
+    Pixel(PixelCmd),
 }
 
 /// What must be open for a command to make sense.
@@ -176,6 +179,7 @@ impl Command {
         Self::FIXED
             .into_iter()
             .chain(ToolKind::ALL.into_iter().map(Self::Tool))
+            .chain(PixelCmd::all().map(Self::Pixel))
     }
 
     pub fn label(self) -> &'static str {
@@ -230,6 +234,7 @@ impl Command {
             Self::StartTour => "Show the Tour",
             Self::About => "About OpenPax",
             Self::Tool(tool) => tool.name(),
+            Self::Pixel(c) => c.label(),
         }
     }
 
@@ -281,6 +286,7 @@ impl Command {
             Self::StartTour => icons::LIGHTBULB,
             Self::About => icons::INFO,
             Self::Tool(tool) => icons::tool(tool),
+            Self::Pixel(c) => c.icon(),
         }
     }
 
@@ -374,6 +380,7 @@ impl Command {
                 ToolKind::MagicWand => keys![key(Key::W)],
                 ToolKind::TileStamp => keys![key(Key::T)],
             },
+            Self::Pixel(c) => c.default_shortcuts(),
             Self::ImportZip
             | Self::LoadDefaultPack
             | Self::Remix
@@ -444,6 +451,7 @@ impl Command {
             | Self::FocusSearch
             | Self::OpenPalette => "View",
             Self::Tool(_) => "Tools",
+            Self::Pixel(c) => c.category(),
             Self::ShowShortcuts | Self::StartTour | Self::About => "Help",
         }
     }
@@ -507,6 +515,8 @@ impl Command {
             | Self::ZoomFit
             | Self::ToggleTiling
             | Self::Tool(_) => Needs::Texture,
+            Self::Pixel(c) if c.needs_pack_only() => Needs::Pack,
+            Self::Pixel(_) => Needs::Texture,
             Self::AddCube
             | Self::DuplicateElement
             | Self::DeleteElement
@@ -783,7 +793,10 @@ mod tests {
             assert!(!command.icon().is_empty());
             assert!(!all[i + 1..].contains(command), "{command:?} listed twice");
         }
-        assert_eq!(all.len(), Command::FIXED.len() + ToolKind::ALL.len());
+        assert_eq!(
+            all.len(),
+            Command::FIXED.len() + ToolKind::ALL.len() + PixelCmd::ALL.len()
+        );
     }
 
     #[test]

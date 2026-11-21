@@ -62,6 +62,8 @@ pub struct Settings {
     pub optimize: crate::optimize::OptimizeSettings,
     /// Every pixel tool option (newer than the individual fields above).
     pub tool_settings: Option<ToolSettings>,
+    /// Canvas, grid, onion skin and mouse-button preferences of the pixel editor.
+    pub pixel_view: Option<crate::texture_editor::ViewPrefs>,
 }
 
 impl Default for Settings {
@@ -87,6 +89,7 @@ impl Default for Settings {
             recent_colors: Vec::new(),
             optimize: crate::optimize::OptimizeSettings::default(),
             tool_settings: None,
+            pixel_view: None,
         };
         settings.store_tools(&ToolState::default());
         settings
@@ -107,6 +110,7 @@ impl Settings {
         self.palette.clone_from(&tools.palette.colors);
         self.recent_colors.clone_from(&tools.recent);
         self.tool_settings = Some(tools.settings.clone());
+        self.pixel_view = Some(tools.view.clone());
     }
 
     /// The tool state these settings describe.
@@ -134,6 +138,9 @@ impl Settings {
                 Palette::new("Palette", self.palette.clone())
             },
             recent: self.recent_colors.clone(),
+            view: self.pixel_view.clone().unwrap_or_default(),
+            brushes: Vec::new(),
+            tile: Default::default(),
         }
     }
 }

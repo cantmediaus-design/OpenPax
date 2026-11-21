@@ -15,6 +15,7 @@ openpax-core.workspace = true
 openpax-paint.workspace = true
 openpax-model.workspace = true
 openpax-render.workspace = true
+openpax-script.workspace = true
 eframe.workspace = true
 egui_dock.workspace = true
 rfd.workspace = true

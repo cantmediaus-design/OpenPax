@@ -11,7 +11,7 @@ use openpax_core::{Pack, RESOURCE_FORMATS, ResourceLocation, version_for_format}
 use openpax_model::{Element, ModelFile};
 use openpax_paint::Bitmap;
 
-use crate::app::{App, texture_mut};
+use crate::app::App;
 use crate::remix_ui::{LoadDefaultState, RemixState};
 use crate::theme::{self, DIALOG_WIDTH, SPACE_L, SPACE_M, SPACE_S};
 use crate::{icons, widgets};
@@ -37,10 +37,6 @@ pub enum Dialog {
     NewModel {
         namespace: String,
         path: String,
-    },
-    Resize {
-        width: u32,
-        height: u32,
     },
     /// Editors with unsaved changes, and what to do once they are saved or discarded.
     ConfirmClose {
@@ -68,6 +64,8 @@ pub enum Dialog {
     OptimizePack,
     /// What optimizing every model would change, waiting for confirmation.
     OptimizeSummary(Box<crate::optimize::OptimizePlan>),
+    /// A texture-editor dialog (scale, filters, export, scripts...).
+    Pixel(Box<crate::pixel_dialogs::PixelDialog>),
 }
 
 /// What an unsaved-changes prompt is guarding.
@@ -274,6 +272,8 @@ impl App {
                     WIDE_DIALOG_WIDTH
                 }
                 Dialog::OptimizeModel(_) | Dialog::OptimizePack => DIALOG_WIDTH + 80.0,
+                Dialog::Pixel(ref d) if d.wide() => WIDE_DIALOG_WIDTH,
+                Dialog::Pixel(_) => DIALOG_WIDTH + 80.0,
                 Dialog::LoadDefault(_) => DIALOG_WIDTH + 80.0,
                 _ => DIALOG_WIDTH,
             });
@@ -293,7 +293,6 @@ impl App {
                 Dialog::NewModel { namespace, path } => {
                     self.new_model_dialog(ui, fresh, namespace, path)
                 }
-                Dialog::Resize { width, height } => self.resize_dialog(ui, width, height),
                 Dialog::ConfirmClose { ids, then } => self.confirm_close_dialog(ui, ids, then),
                 Dialog::LoadDefault(state) => self.load_default_dialog(ui, state),
                 Dialog::Remix(state) => self.remix_dialog(ui, state),
@@ -314,6 +313,7 @@ impl App {
                 Dialog::OptimizeModel(state) => self.optimize_model_dialog(ui, state),
                 Dialog::OptimizePack => self.optimize_pack_dialog(ui),
                 Dialog::OptimizeSummary(plan) => self.optimize_summary_dialog(ui, plan),
+                Dialog::Pixel(state) => self.pixel_dialog(ui, state),
             };
         });
         // Escape or a click outside cancels.
@@ -490,22 +490,6 @@ impl App {
             }
             Err(e) => self.error(format!("Could not create model:\n{e}")),
         }
-    }
-
-    fn resize_dialog(&mut self, ui: &mut egui::Ui, width: &mut u32, height: &mut u32) -> bool {
-        header(ui, icons::RESIZE, "Resize Canvas");
-        form(ui, "resize", |ui| size_row(ui, width, height));
-        ui.add_space(SPACE_S);
-        ui.weak("The top-left corner stays in place; pixels outside the new size are cropped.");
-        let (confirm, cancel) = footer(ui, "Resize", true);
-        if confirm {
-            if let Some(editor) = texture_mut(&mut self.editors, self.active) {
-                editor.doc.resize_canvas(*width, *height);
-                editor.fit_pending = true;
-            }
-            return true;
-        }
-        cancel
     }
 
     fn confirm_close_dialog(&mut self, ui: &mut egui::Ui, ids: &[u64], then: &Then) -> bool {
