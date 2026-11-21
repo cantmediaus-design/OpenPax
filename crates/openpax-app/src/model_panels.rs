@@ -72,6 +72,7 @@ fn elements_section(ui: &mut egui::Ui, doc: &mut ModelDocument) -> Option<Comman
             (Command::AddCube, true),
             (Command::DuplicateElement, has_selection),
             (Command::DeleteElement, has_selection),
+            (Command::OptimizeModel, true),
         ] {
             let tooltip = command.tooltip(&ctx);
             if widgets::icon_button_enabled(ui, enabled, command.icon(), &tooltip).clicked() {

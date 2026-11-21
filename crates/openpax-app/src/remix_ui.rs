@@ -33,6 +33,8 @@ pub enum JobResult {
     SourceAdded(Box<SourceFiles>, Option<u32>),
     /// A pack folder written to disk, to be opened.
     PackCreated(PathBuf),
+    /// What optimizing every model would change.
+    OptimizePlan(Box<crate::optimize::OptimizePlan>),
 }
 
 fn has_content(dir: &std::path::Path) -> bool {
@@ -276,12 +278,15 @@ impl App {
                     .retain(|d| !matches!(d, Dialog::LoadDefault(_) | Dialog::Remix(_)));
                 self.open_new_pack(root);
             }
+            Outcome::Done(JobResult::OptimizePlan(plan)) => {
+                self.open_dialog(Dialog::OptimizeSummary(plan));
+            }
             Outcome::Cancelled => self.info("Cancelled"),
             Outcome::Failed(e) => self.error(e),
         }
     }
 
-    fn start_job(
+    pub(crate) fn start_job(
         &mut self,
         ctx: &egui::Context,
         title: impl Into<String>,

@@ -63,6 +63,11 @@ pub enum Dialog {
     Recover {
         assets: Vec<String>,
     },
+    OptimizeModel(Box<crate::optimize_ui::OptimizeModelState>),
+    /// Options for optimizing every model, before the analysis runs.
+    OptimizePack,
+    /// What optimizing every model would change, waiting for confirmation.
+    OptimizeSummary(Box<crate::optimize::OptimizePlan>),
 }
 
 /// What an unsaved-changes prompt is guarding.
@@ -265,7 +270,10 @@ impl App {
         let mut done = false;
         let modal = egui::Modal::new(egui::Id::unique(("openpax_dialog", depth))).show(ctx, |ui| {
             ui.set_width(match dialog {
-                Dialog::Remix(_) | Dialog::Shortcuts(_) => WIDE_DIALOG_WIDTH,
+                Dialog::Remix(_) | Dialog::Shortcuts(_) | Dialog::OptimizeSummary(_) => {
+                    WIDE_DIALOG_WIDTH
+                }
+                Dialog::OptimizeModel(_) | Dialog::OptimizePack => DIALOG_WIDTH + 80.0,
                 Dialog::LoadDefault(_) => DIALOG_WIDTH + 80.0,
                 _ => DIALOG_WIDTH,
             });
@@ -303,6 +311,9 @@ impl App {
                     let assets = assets.clone();
                     self.recover_dialog(ui, &assets)
                 }
+                Dialog::OptimizeModel(state) => self.optimize_model_dialog(ui, state),
+                Dialog::OptimizePack => self.optimize_pack_dialog(ui),
+                Dialog::OptimizeSummary(plan) => self.optimize_summary_dialog(ui, plan),
             };
         });
         // Escape or a click outside cancels.

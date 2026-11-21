@@ -88,6 +88,11 @@ impl ModelEditor {
         self.doc.revision() != self.saved_revision
     }
 
+    /// Treats the current contents as what is on disk.
+    pub fn mark_saved(&mut self) {
+        self.saved_revision = self.doc.revision();
+    }
+
     pub fn save(&mut self, pack: &Pack) -> Result<(), String> {
         pack.write(&self.rel_path, self.doc.model().to_json().as_bytes())
             .map_err(|e| e.to_string())?;

@@ -6,9 +6,11 @@
 mod document;
 mod geometry;
 mod json;
+pub mod optimize;
 mod pretty;
 
 pub use document::ModelDocument;
 pub use geometry::{FaceMesh, Hit, Vertex, build_mesh, element_corners, pick};
 pub use json::{Axis, Direction, Element, Face, ModelFile, Rotation};
+pub use optimize::{ModelContext, ModelReport, Opacity, OptimizeOptions, optimize};
 pub use pretty::to_pretty_json;

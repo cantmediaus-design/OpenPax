@@ -58,6 +58,8 @@ pub struct Settings {
     pub shape_filled: bool,
     pub palette: Vec<Rgba>,
     pub recent_colors: Vec<Rgba>,
+    /// The options last used in the Optimize dialogs.
+    pub optimize: crate::optimize::OptimizeSettings,
 }
 
 impl Default for Settings {
@@ -81,6 +83,7 @@ impl Default for Settings {
             shape_filled: false,
             palette: Vec::new(),
             recent_colors: Vec::new(),
+            optimize: crate::optimize::OptimizeSettings::default(),
         };
         settings.store_tools(&ToolState::default());
         settings

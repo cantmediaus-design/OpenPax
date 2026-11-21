@@ -1,6 +1,6 @@
 use glam::{Mat4, Quat, Vec3};
 
-use crate::{Axis, Direction, Element, ModelFile};
+use crate::{Axis, Direction, Element, Face, ModelFile};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Vertex {
@@ -59,7 +59,7 @@ impl Element {
 }
 
 /// The untransformed corners of a face: top-left, bottom-left, bottom-right, top-right.
-fn local_corners(element: &Element, direction: Direction) -> [Vec3; 4] {
+pub(crate) fn local_corners(element: &Element, direction: Direction) -> [Vec3; 4] {
     let [x1, y1, z1] = element.from;
     let [x2, y2, z2] = element.to;
     let v = Vec3::new;
@@ -79,22 +79,33 @@ pub fn element_corners(element: &Element, direction: Direction) -> [[f32; 3]; 4]
     local_corners(element, direction).map(|p| transform.transform_point3(p).to_array())
 }
 
+/// Quarter turns of a face's texture rotation (0..=3).
+pub(crate) fn texture_turns(face: &Face) -> usize {
+    (face.rotation.unwrap_or(0).rem_euclid(360) / 90) as usize
+}
+
+/// The UV (in 0..16 texture units) each corner of a face receives, in [`local_corners`] order.
+pub(crate) fn vertex_uvs(element: &Element, direction: Direction, face: &Face) -> [[f32; 2]; 4] {
+    let [u1, v1, u2, v2] = face.uv.unwrap_or_else(|| element.default_uv(direction));
+    let uvs = [[u1, v1], [u1, v2], [u2, v2], [u2, v1]];
+    // Rotating the texture clockwise shifts which UV corner each vertex receives.
+    let turns = texture_turns(face);
+    std::array::from_fn(|i| uvs[(i + turns) % 4])
+}
+
 /// Builds the quads for every face the model defines.
 pub fn build_mesh(model: &ModelFile) -> Vec<FaceMesh> {
     let mut out = Vec::new();
     for (index, element) in model.elements().iter().enumerate() {
         let transform = element.transform();
         for (&direction, face) in &element.faces {
-            let [u1, v1, u2, v2] = face.uv.unwrap_or_else(|| element.default_uv(direction));
-            let uvs = [[u1, v1], [u1, v2], [u2, v2], [u2, v1]];
-            // Rotating the texture clockwise shifts which UV corner each vertex receives.
-            let turns = (face.rotation.unwrap_or(0).rem_euclid(360) / 90) as usize;
+            let uvs = vertex_uvs(element, direction, face);
             let normal = transform
                 .transform_vector3(Vec3::from(direction.normal()))
                 .normalize_or_zero();
             let corners = local_corners(element, direction);
             let vertices = std::array::from_fn(|i| {
-                let [u, v] = uvs[(i + turns) % 4];
+                let [u, v] = uvs[i];
                 Vertex {
                     position: transform.transform_point3(corners[i]).to_array(),
                     normal: normal.to_array(),
@@ -155,7 +166,7 @@ pub fn pick(model: &ModelFile, origin: [f32; 3], direction: [f32; 3]) -> Option<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Face, Rotation};
+    use crate::Rotation;
 
     fn near(a: [f32; 3], b: [f32; 3]) -> bool {
         a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-4)

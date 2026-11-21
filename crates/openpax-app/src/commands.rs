@@ -49,6 +49,8 @@ pub enum Command {
     AddCube,
     DuplicateElement,
     DeleteElement,
+    OptimizeModel,
+    OptimizePack,
     // View
     ZoomIn,
     ZoomOut,
@@ -118,7 +120,7 @@ const fn cmd_shift(logical_key: Key) -> KeyboardShortcut {
 }
 
 impl Command {
-    const FIXED: [Self; 47] = [
+    const FIXED: [Self; 49] = [
         Self::NewPack,
         Self::OpenPack,
         Self::ImportZip,
@@ -153,6 +155,8 @@ impl Command {
         Self::AddCube,
         Self::DuplicateElement,
         Self::DeleteElement,
+        Self::OptimizeModel,
+        Self::OptimizePack,
         Self::ZoomIn,
         Self::ZoomOut,
         Self::ZoomFit,
@@ -210,6 +214,8 @@ impl Command {
             Self::AddCube => "Add Cube",
             Self::DuplicateElement => "Duplicate Element",
             Self::DeleteElement => "Delete Element",
+            Self::OptimizeModel => "Optimize Model…",
+            Self::OptimizePack => "Optimize All Models…",
             Self::ZoomIn => "Zoom In",
             Self::ZoomOut => "Zoom Out",
             Self::ZoomFit => "Zoom to Fit",
@@ -260,6 +266,8 @@ impl Command {
             Self::BrushLarger | Self::AddCube => icons::PLUS,
             Self::DuplicateElement => icons::COPY,
             Self::DeleteElement => icons::TRASH,
+            Self::OptimizeModel => icons::MAGIC_WAND,
+            Self::OptimizePack => icons::SPARKLE,
             Self::ZoomIn => icons::ZOOM_IN,
             Self::ZoomOut => icons::ZOOM_OUT,
             Self::ZoomFit => icons::FIT,
@@ -368,6 +376,8 @@ impl Command {
             | Self::FlipVertical
             | Self::ResizeCanvas
             | Self::AddCube
+            | Self::OptimizeModel
+            | Self::OptimizePack
             | Self::ToggleTiling
             | Self::DuplicateAsset
             | Self::DeleteAsset
@@ -413,7 +423,9 @@ impl Command {
             | Self::BrushLarger
             | Self::AddCube
             | Self::DuplicateElement
-            | Self::DeleteElement => "Edit",
+            | Self::DeleteElement
+            | Self::OptimizeModel
+            | Self::OptimizePack => "Edit",
             Self::ZoomIn
             | Self::ZoomOut
             | Self::ZoomFit
@@ -463,6 +475,7 @@ impl Command {
             | Self::Rescan
             | Self::RestoreDeleted
             | Self::StartTour
+            | Self::OptimizePack
             | Self::FocusSearch => Needs::Pack,
             Self::Save
             | Self::CloseTab
@@ -487,9 +500,11 @@ impl Command {
             | Self::ZoomFit
             | Self::ToggleTiling
             | Self::Tool(_) => Needs::Texture,
-            Self::AddCube | Self::DuplicateElement | Self::DeleteElement | Self::ResetView => {
-                Needs::Model
-            }
+            Self::AddCube
+            | Self::DuplicateElement
+            | Self::DeleteElement
+            | Self::OptimizeModel
+            | Self::ResetView => Needs::Model,
             Self::ToggleGrid => Needs::TextureOrModel,
         }
     }

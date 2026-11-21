@@ -54,6 +54,8 @@ pub const DRAG_HANDLE: &str = "\u{EAE2}";
 pub const ARROW_UP: &str = "\u{E08E}";
 pub const ARROW_DOWN: &str = "\u{E03E}";
 pub const CHECK: &str = "\u{E182}";
+pub const MAGIC_WAND: &str = "\u{E6B6}";
+pub const SPARKLE: &str = "\u{E6A2}";
 
 // Objects
 pub const FOLDER: &str = "\u{E24A}";

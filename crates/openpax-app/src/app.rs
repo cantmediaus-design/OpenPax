@@ -471,6 +471,11 @@ impl App {
         }
     }
 
+    /// Makes viewports reload textures, after files changed on disk.
+    pub(crate) fn bump_assets(&mut self) {
+        self.asset_generation += 1;
+    }
+
     pub(crate) fn rescan(&mut self) {
         let Some(pack) = &mut self.pack else { return };
         match pack.rescan() {
@@ -723,6 +728,8 @@ impl App {
             | Command::DuplicateElement
             | Command::DeleteElement
             | Command::ResetView => self.run_model(command),
+            Command::OptimizeModel => self.start_optimize_model(),
+            Command::OptimizePack => self.start_optimize_pack(),
         }
     }
 
@@ -1038,6 +1045,7 @@ impl App {
                 ui.separator();
                 self.menu_item(ui, Command::ExportZip);
                 self.menu_item(ui, Command::Rescan);
+                self.menu_item(ui, Command::OptimizePack);
                 ui.separator();
                 self.menu_item(ui, Command::Quit);
             });
@@ -1056,6 +1064,8 @@ impl App {
                     self.menu_item(ui, Command::AddCube);
                     self.menu_item(ui, Command::DuplicateElement);
                     self.menu_item(ui, Command::DeleteElement);
+                    ui.separator();
+                    self.menu_item(ui, Command::OptimizeModel);
                 } else {
                     self.menu_item(ui, Command::SelectAll);
                     self.menu_item(ui, Command::Deselect);

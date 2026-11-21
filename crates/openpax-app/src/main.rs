@@ -13,6 +13,8 @@ mod icons;
 mod jobs;
 mod model_editor;
 mod model_panels;
+mod optimize;
+mod optimize_ui;
 mod pack_icon;
 mod panels;
 mod recovery;
