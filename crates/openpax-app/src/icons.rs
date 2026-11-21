@@ -1,6 +1,9 @@
 //! Icon glyphs from the bundled Phosphor font (`assets/Phosphor.ttf`, MIT licensed).
 //!
 //! Each constant is a one-character string that renders as an icon in any label or button.
+//!
+//! This is the app's icon vocabulary, so it holds glyphs before any screen uses them.
+#![allow(dead_code)]
 
 use openpax_core::AssetKind;
 use openpax_paint::ToolKind;
