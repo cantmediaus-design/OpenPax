@@ -28,6 +28,7 @@ wgpu = "30"
 eframe = { version = "0.37", features = ["persistence"] }
 egui_dock = "0.22"
 rfd = "0.18"
+arboard = { version = "3.7", default-features = false, features = ["image-data"] }
 log = "0.4"
 env_logger = "0.11"
 

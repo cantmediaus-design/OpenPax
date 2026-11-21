@@ -9,17 +9,18 @@ use egui_dock::{DockArea, DockState, TabViewer};
 use openpax_core::{AssetKind, Pack, PackMeta};
 use openpax_model::Element;
 
+use crate::command_palette::PaletteState;
 use crate::commands::{self, Active, Command};
-use crate::dialogs::Dialog;
+use crate::dialogs::{Dialog, Then};
 use crate::editor::{Editor, TextEditor, TextureEditor, ToolState};
 use crate::explorer::{self, Action, Explorer, Thumbnails, Tree};
 use crate::jobs::Job;
 use crate::model_editor::ModelEditor;
 use crate::remix_ui::{JobResult, RemixState, Versions};
-use crate::settings::{SETTINGS_KEY, Settings};
+use crate::settings::{PackSession, SESSIONS_KEY, SETTINGS_KEY, Settings, remember_session};
 use crate::theme::{self, SPACE_M, SPACE_S, SPACE_XL, SPACE_XXL, ThemeChoice};
 use crate::toasts::{Level, Toasts};
-use crate::{icons, widgets};
+use crate::{clipboard, icons, widgets};
 
 const RECENT_KEY: &str = "recent_packs";
 const MAX_RECENT: usize = 8;
@@ -55,6 +56,10 @@ pub struct App {
     pub(crate) dialogs: Vec<Dialog>,
     /// True until the top dialog has been drawn once (to focus its first field).
     pub(crate) dialog_fresh: bool,
+    /// The command palette, while it is open.
+    pub(crate) palette: Option<PaletteState>,
+    /// Open tabs of recently used packs, restored when a pack is opened again.
+    sessions: Vec<PackSession>,
     status: Status,
     toasts: Toasts,
     pub(crate) allow_quit: bool,
@@ -125,6 +130,10 @@ impl App {
             .and_then(|s| eframe::get_value(s, SETTINGS_KEY))
             .unwrap_or_default();
         theme::install(&cc.egui_ctx, settings.theme);
+        let sessions: Vec<PackSession> = cc
+            .storage
+            .and_then(|s| eframe::get_value(s, SESSIONS_KEY))
+            .unwrap_or_default();
 
         let mut app = Self {
             pack: None,
@@ -143,6 +152,8 @@ impl App {
             settings,
             dialogs: Vec::new(),
             dialog_fresh: false,
+            palette: None,
+            sessions,
             status: Status {
                 text: "Ready".to_owned(),
                 level: Level::Info,
@@ -255,13 +266,19 @@ impl App {
     // ---- packs ----
 
     pub(crate) fn open_pack(&mut self, root: PathBuf) {
-        if !self.dirty_ids().is_empty() || self.pack_dirty() {
-            self.warn("Save or close the modified files before switching packs.");
+        let ids = self.dirty_ids();
+        if !ids.is_empty() || self.pack_dirty() {
+            // Ask to save first; the prompt opens the pack once the edits are dealt with.
+            self.open_dialog(Dialog::ConfirmClose {
+                ids,
+                then: Then::OpenPack(root),
+            });
             return;
         }
         let path = root.to_string_lossy().into_owned();
         match Pack::open(&root) {
             Ok(pack) => {
+                self.remember_session();
                 self.tree = Tree::build(&pack.index);
                 self.success(format!(
                     "Opened {} ({} assets)",
@@ -278,13 +295,60 @@ impl App {
                 self.title_stale = true;
 
                 self.recent.retain(|p| p != &path);
-                self.recent.insert(0, path);
+                self.recent.insert(0, path.clone());
                 self.recent.truncate(MAX_RECENT);
+                self.restore_session(&path);
             }
             Err(e) => {
                 self.recent.retain(|p| p != &path);
                 self.error(format!("Could not open pack:\n{e}"));
             }
+        }
+    }
+
+    /// The open pack and its tabs, in tab order.
+    fn current_session(&self) -> Option<PackSession> {
+        let pack = self.pack.as_ref()?;
+        let tabs = self
+            .dock
+            .iter_all_tabs()
+            .filter_map(|(_, id)| self.editors.get(id))
+            .map(|e| e.rel_path().to_owned())
+            .collect();
+        let active = self
+            .active
+            .and_then(|id| self.editors.get(&id))
+            .map(|e| e.rel_path().to_owned());
+        Some(PackSession {
+            pack: pack.root().to_string_lossy().into_owned(),
+            tabs,
+            active,
+        })
+    }
+
+    /// Notes which tabs the open pack has, so they come back when it is opened again.
+    fn remember_session(&mut self) {
+        if let Some(session) = self.current_session() {
+            remember_session(&mut self.sessions, session);
+        }
+    }
+
+    /// Reopens the tabs that were open the last time this pack was used.
+    fn restore_session(&mut self, pack_path: &str) {
+        let Some(session) = self.sessions.iter().find(|s| s.pack == pack_path).cloned() else {
+            return;
+        };
+        let Some(pack) = &self.pack else { return };
+        let tabs: Vec<String> = session
+            .tabs
+            .into_iter()
+            .filter(|t| pack.index.entries.iter().any(|e| &e.rel_path == t))
+            .collect();
+        for tab in &tabs {
+            self.open_asset(tab);
+        }
+        if let Some(active) = session.active.filter(|a| tabs.contains(a)) {
+            self.open_asset(&active); // focuses the tab that is already open
         }
     }
 
@@ -337,7 +401,7 @@ impl App {
         self.open_pack(root);
     }
 
-    fn export_zip(&mut self) {
+    pub(crate) fn export_zip(&mut self) {
         let Some(pack) = &self.pack else { return };
         let Some(dest) = rfd::FileDialog::new()
             .set_title("Export resource pack")
@@ -526,14 +590,24 @@ impl App {
                     if self.editors.get(&id).is_some_and(Editor::dirty) {
                         self.open_dialog(Dialog::ConfirmClose {
                             ids: vec![id],
-                            quit: false,
+                            then: Then::CloseTabs,
                         });
                     } else {
                         self.close_editor(id);
                     }
                 }
             }
-            Command::ExportZip => self.export_zip(),
+            Command::ExportZip => {
+                let ids = self.dirty_ids();
+                if ids.is_empty() && !self.pack_dirty() {
+                    self.export_zip();
+                } else {
+                    self.open_dialog(Dialog::ConfirmClose {
+                        ids,
+                        then: Then::Export,
+                    });
+                }
+            }
             Command::Rescan => {
                 self.rescan();
                 self.thumbs.clear();
@@ -560,6 +634,10 @@ impl App {
                 self.settings.show_explorer = true;
                 self.focus_search = true;
             }
+            Command::OpenPalette => self.palette = Some(PaletteState::new()),
+            Command::ShowShortcuts => self.open_dialog(Dialog::Shortcuts),
+            Command::About => self.open_dialog(Dialog::About),
+            Command::Cut | Command::Copy | Command::Paste => self.clipboard_command(command),
             Command::ToggleGrid => {
                 if let Some(editor) = texture_mut(&mut self.editors, self.active) {
                     editor.show_grid ^= true;
@@ -612,6 +690,58 @@ impl App {
         }
     }
 
+    /// Copy, cut and paste of pixels in the active texture, through the system clipboard.
+    fn clipboard_command(&mut self, command: Command) {
+        let Some(editor) = texture_mut(&mut self.editors, self.active) else {
+            return;
+        };
+        let doc = &mut editor.doc;
+        doc.stroke_end();
+        match command {
+            Command::Copy | Command::Cut => {
+                let image = doc.copy_selected();
+                let size = format!("{} × {}", image.width(), image.height());
+                if let Err(e) = clipboard::copy_image(&image) {
+                    self.error(format!("Could not copy to the clipboard:\n{e}"));
+                    return;
+                }
+                if command == Command::Cut {
+                    doc.clear_selected();
+                    self.info(format!("Cut {size} pixels"));
+                } else {
+                    self.info(format!("Copied {size} pixels"));
+                }
+            }
+            Command::Paste => {
+                let image = match clipboard::paste_image() {
+                    Ok(image) => image,
+                    Err(e) => {
+                        self.warn(e);
+                        return;
+                    }
+                };
+                // Paste where the selection is, so copy + paste in place is a no-op move.
+                let at = doc.selection().map_or((0, 0), |r| (r.x, r.y));
+                doc.paste(&image, at);
+                let (width, height) = (doc.width(), doc.height());
+                let cropped =
+                    at.0 as u32 + image.width() > width || at.1 as u32 + image.height() > height;
+                self.tools.tool = openpax_paint::ToolKind::Move;
+                if cropped {
+                    self.warn(format!(
+                        "Pasted a {} × {} image onto a {width} × {height} canvas, so part of it \
+                         was cut off. Resize the canvas first to keep all of it.",
+                        image.width(),
+                        image.height(),
+                    ));
+                } else {
+                    self.info("Pasted as a new layer. Drag it into place with the Move tool.");
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn run_model(&mut self, command: Command) {
         let Some(editor) = model_mut(&mut self.editors, self.active) else {
             return;
@@ -637,7 +767,7 @@ impl App {
     // ---- input ----
 
     fn shortcuts(&mut self, ctx: &egui::Context) {
-        if !self.dialogs.is_empty() || self.job.is_some() {
+        if !self.dialogs.is_empty() || self.job.is_some() || self.palette.is_some() {
             return;
         }
         let typing = ctx.text_edit_focused();
@@ -661,6 +791,24 @@ impl App {
                 }
             }
         });
+        // egui delivers Ctrl+C / X / V as clipboard events rather than key presses. Text fields
+        // get them while they have focus; otherwise they act on the canvas.
+        if !typing && !popup_open && active == Active::Texture {
+            ctx.input_mut(|input| {
+                input.events.retain(|event| {
+                    let command = match event {
+                        egui::Event::Copy => Command::Copy,
+                        egui::Event::Cut => Command::Cut,
+                        egui::Event::Paste(_) | egui::Event::PasteImage(_) => Command::Paste,
+                        _ => return true,
+                    };
+                    if !fired.contains(&command) {
+                        fired.push(command);
+                    }
+                    false
+                });
+            });
+        }
         for command in fired {
             self.run(command, ctx);
         }
@@ -675,10 +823,16 @@ impl App {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             let already_asking = matches!(
                 self.dialogs.last(),
-                Some(Dialog::ConfirmClose { quit: true, .. })
+                Some(Dialog::ConfirmClose {
+                    then: Then::Quit,
+                    ..
+                })
             );
             if !already_asking {
-                self.open_dialog(Dialog::ConfirmClose { ids, quit: true });
+                self.open_dialog(Dialog::ConfirmClose {
+                    ids,
+                    then: Then::Quit,
+                });
             }
         }
     }
@@ -818,6 +972,12 @@ impl App {
                 self.menu_item(ui, Command::Undo);
                 self.menu_item(ui, Command::Redo);
                 ui.separator();
+                if self.active_kind() != Active::Model {
+                    self.menu_item(ui, Command::Cut);
+                    self.menu_item(ui, Command::Copy);
+                    self.menu_item(ui, Command::Paste);
+                    ui.separator();
+                }
                 if self.active_kind() == Active::Model {
                     self.menu_item(ui, Command::AddCube);
                     self.menu_item(ui, Command::DuplicateElement);
@@ -858,6 +1018,7 @@ impl App {
                 self.menu_toggle(ui, Command::ToggleExplorer, self.settings.show_explorer);
                 self.menu_toggle(ui, Command::ToggleInspector, self.settings.show_inspector);
                 self.menu_item(ui, Command::FocusSearch);
+                self.menu_item(ui, Command::OpenPalette);
                 ui.separator();
                 ui.menu_button(widgets::icon_label(icons::MOON, "Theme"), |ui| {
                     for choice in ThemeChoice::ALL {
@@ -875,6 +1036,17 @@ impl App {
                 for tool in openpax_paint::ToolKind::ALL {
                     self.menu_toggle(ui, Command::Tool(tool), self.tools.tool == tool);
                 }
+            });
+
+            ui.menu_button("Help", |ui| {
+                self.menu_item(ui, Command::OpenPalette);
+                self.menu_item(ui, Command::ShowShortcuts);
+                ui.separator();
+                ui.hyperlink_to(
+                    widgets::icon_label(icons::BOOK, "Documentation"),
+                    env!("CARGO_PKG_REPOSITORY"),
+                );
+                self.menu_item(ui, Command::About);
             });
         });
     }
@@ -1109,6 +1281,16 @@ impl App {
             );
             ui.add_space(SPACE_S);
             ui.label(RichText::new("or drop a pack folder or zip onto this window").weak());
+            if let Some(shortcut) = Command::OpenPalette.shortcut() {
+                ui.add_space(SPACE_S);
+                ui.label(
+                    RichText::new(format!(
+                        "Press {} to find any command",
+                        ctx.format_shortcut(&shortcut)
+                    ))
+                    .weak(),
+                );
+            }
 
             if !self.recent.is_empty() {
                 ui.add_space(SPACE_XXL);
@@ -1140,7 +1322,7 @@ impl App {
                 ui,
                 icons::IMAGE,
                 "Nothing open",
-                "Pick an asset in the explorer, or create one from the File menu.",
+                "Pick an asset in the explorer, or find it by name in the Command Palette.",
             );
             self.active = None;
             return;
@@ -1177,7 +1359,7 @@ impl App {
         if !close_requests.is_empty() && self.dialogs.is_empty() {
             self.open_dialog(Dialog::ConfirmClose {
                 ids: close_requests,
-                quit: false,
+                then: Then::CloseTabs,
             });
         }
 
@@ -1253,6 +1435,7 @@ impl eframe::App for App {
             .show(ui, |ui| self.central(ui));
 
         self.show_dialog(&ctx);
+        self.show_command_palette(&ctx);
         self.show_job(&ctx);
         self.toasts.show(&ctx, status.response.rect.height());
         Self::drop_overlay(&ctx);
@@ -1262,6 +1445,8 @@ impl eframe::App for App {
         self.settings.store_tools(&self.tools);
         eframe::set_value(storage, RECENT_KEY, &self.recent);
         eframe::set_value(storage, SETTINGS_KEY, &self.settings);
+        self.remember_session();
+        eframe::set_value(storage, SESSIONS_KEY, &self.sessions);
     }
 }
 

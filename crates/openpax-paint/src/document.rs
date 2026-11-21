@@ -30,6 +30,11 @@ struct State {
     selection: Option<Rect>,
 }
 
+/// Undo steps kept per document; older steps are forgotten.
+pub const MAX_UNDO_STEPS: usize = 200;
+/// Rough memory budget for one document's undo history, in bytes of pixel data.
+const MAX_UNDO_BYTES: usize = 256 * 1024 * 1024;
+
 #[derive(Debug)]
 enum Edit {
     Pixels {
@@ -52,6 +57,23 @@ enum Edit {
         /// Only the opacity changed, so a following opacity change may be merged into this.
         opacity_only: bool,
     },
+}
+
+impl Edit {
+    /// Approximate memory held by this step.
+    fn bytes(&self) -> usize {
+        let state = |s: &State| {
+            s.layers
+                .iter()
+                .map(|l| l.pixels.data().len())
+                .sum::<usize>()
+        };
+        match self {
+            Self::Pixels { before, after, .. } => before.len() + after.len(),
+            Self::Structure { before, after } => state(before) + state(after),
+            Self::Layer { .. } => 64,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -218,7 +240,7 @@ impl Document {
             *last_after = after;
             return;
         }
-        self.undo.push(Edit::Layer {
+        self.push_undo(Edit::Layer {
             index,
             before,
             after,
@@ -379,7 +401,7 @@ impl Document {
             return;
         }
         let rect = rect.unwrap_or(Rect::new(0, 0, 0, 0));
-        self.undo.push(Edit::Pixels {
+        self.push_undo(Edit::Pixels {
             layer: self.active,
             rect,
             before: base.patch(rect),
@@ -411,6 +433,58 @@ impl Document {
         });
     }
 
+    // ---- clipboard ----
+
+    /// The active layer's pixels inside the selection (or the whole layer when nothing is
+    /// selected), for copying.
+    pub fn copy_selected(&self) -> Bitmap {
+        let pixels = &self.layers[self.active].pixels;
+        let region = self.selection.unwrap_or(pixels.bounds());
+        let data = pixels.patch(region);
+        Bitmap::from_rgba(region.w as u32, region.h as u32, data)
+            .expect("a patch has the size of its rect")
+    }
+
+    /// Pastes an image onto a new layer above the active one with its top-left corner at `at`,
+    /// and selects it so the Move tool can position it. Parts outside the canvas are cut off.
+    /// One undo step.
+    pub fn paste(&mut self, image: &Bitmap, at: (i32, i32)) {
+        if image.width() == 0 || image.height() == 0 {
+            return;
+        }
+        self.structural(|doc| {
+            let mut pixels = Bitmap::new(doc.width, doc.height);
+            for y in 0..image.height() as i32 {
+                for x in 0..image.width() as i32 {
+                    if let Some(color) = image.get(x, y) {
+                        pixels.set(at.0 + x, at.1 + y, color);
+                    }
+                }
+            }
+            let rect = Rect::new(at.0, at.1, image.width() as i32, image.height() as i32);
+            doc.layers
+                .insert(doc.active + 1, Layer::new("Pasted", pixels));
+            doc.active += 1;
+            doc.selection = rect.intersect(&doc.bounds());
+        });
+    }
+
+    // ---- history ----
+
+    /// Records a new undo step, forgetting the oldest ones beyond the step and memory limits.
+    fn push_undo(&mut self, edit: Edit) {
+        self.undo.push(edit);
+        let mut bytes: usize = self.undo.iter().map(Edit::bytes).sum();
+        let mut drop = 0;
+        while self.undo.len() - drop > 1
+            && (self.undo.len() - drop > MAX_UNDO_STEPS || bytes > MAX_UNDO_BYTES)
+        {
+            bytes -= self.undo[drop].bytes();
+            drop += 1;
+        }
+        self.undo.drain(..drop);
+    }
+
     // ---- structural edits ----
 
     fn state(&self) -> State {
@@ -437,7 +511,7 @@ impl Document {
         edit(self);
         let after = self.state();
         if before != after {
-            self.undo.push(Edit::Structure {
+            self.push_undo(Edit::Structure {
                 before: Box::new(before),
                 after: Box::new(after),
             });
@@ -952,6 +1026,53 @@ mod tests {
 
         assert!(doc.undo());
         assert_eq!(names(&doc), ["Layer 3", "Layer 1", "Layer 2"]);
+    }
+
+    #[test]
+    fn copy_and_paste_onto_a_new_layer() {
+        let mut doc = Document::new(4, 4);
+        drag(&mut doc, ToolKind::Pencil, settings(RED), (0, 0), (1, 0));
+        drag(&mut doc, ToolKind::Select, settings(RED), (0, 0), (1, 1));
+        let copied = doc.copy_selected();
+        assert_eq!((copied.width(), copied.height()), (2, 2));
+        assert_eq!(copied.get(1, 0), Some(RED));
+
+        doc.paste(&copied, (3, 2));
+        assert_eq!(doc.layers().len(), 2);
+        assert_eq!(doc.active(), 1);
+        assert_eq!(doc.layers()[1].name, "Pasted");
+        assert_eq!(
+            doc.selection(),
+            Some(Rect::new(3, 2, 1, 2)),
+            "clipped to the canvas"
+        );
+        assert_eq!(ascii(&doc), ["##..", "....", "...#", "...."]);
+
+        assert!(doc.undo());
+        assert_eq!(doc.layers().len(), 1);
+        assert_eq!(doc.selection(), Some(Rect::new(0, 0, 2, 2)));
+    }
+
+    #[test]
+    fn copy_without_selection_takes_the_whole_layer() {
+        let doc = Document::new(3, 2);
+        let copied = doc.copy_selected();
+        assert_eq!((copied.width(), copied.height()), (3, 2));
+    }
+
+    #[test]
+    fn undo_history_is_capped() {
+        let mut doc = Document::new(1, 1);
+        for i in 0..MAX_UNDO_STEPS + 50 {
+            let color = [(i % 2) as u8 * 255, 0, 0, 255];
+            doc.stroke_begin(ToolKind::Pencil, settings(color), (0, 0));
+            doc.stroke_end();
+        }
+        let mut steps = 0;
+        while doc.undo() {
+            steps += 1;
+        }
+        assert_eq!(steps, MAX_UNDO_STEPS);
     }
 
     #[test]

@@ -12,6 +12,7 @@ use openpax_model::{Element, ModelFile};
 use openpax_paint::Bitmap;
 
 use crate::app::{App, texture_mut};
+use crate::commands::Command;
 use crate::remix_ui::{LoadDefaultState, RemixState};
 use crate::theme::{self, DIALOG_WIDTH, SPACE_L, SPACE_M, SPACE_S};
 use crate::{icons, widgets};
@@ -42,13 +43,35 @@ pub enum Dialog {
         width: u32,
         height: u32,
     },
-    /// Editors with unsaved changes that are about to be closed.
+    /// Editors with unsaved changes, and what to do once they are saved or discarded.
     ConfirmClose {
         ids: Vec<u64>,
-        quit: bool,
+        then: Then,
     },
     LoadDefault(Box<LoadDefaultState>),
     Remix(Box<RemixState>),
+    Shortcuts,
+    About,
+}
+
+/// What an unsaved-changes prompt is guarding.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Then {
+    /// Close these tabs.
+    CloseTabs,
+    /// Close every tab and quit.
+    Quit,
+    /// Close every tab and open another pack.
+    OpenPack(PathBuf),
+    /// Export the pack as a zip; tabs stay open.
+    Export,
+}
+
+impl Then {
+    /// Whether `pack.mcmeta` edits are part of the prompt (everything but closing single tabs).
+    fn includes_pack_meta(&self) -> bool {
+        *self != Self::CloseTabs
+    }
 }
 
 /// `folder/name`, or just `name` at the top of the category.
@@ -231,7 +254,7 @@ impl App {
         let mut done = false;
         let modal = egui::Modal::new(egui::Id::unique(("openpax_dialog", depth))).show(ctx, |ui| {
             ui.set_width(match dialog {
-                Dialog::Remix(_) => WIDE_DIALOG_WIDTH,
+                Dialog::Remix(_) | Dialog::Shortcuts => WIDE_DIALOG_WIDTH,
                 Dialog::LoadDefault(_) => DIALOG_WIDTH + 80.0,
                 _ => DIALOG_WIDTH,
             });
@@ -252,9 +275,11 @@ impl App {
                     self.new_model_dialog(ui, fresh, namespace, path)
                 }
                 Dialog::Resize { width, height } => self.resize_dialog(ui, width, height),
-                Dialog::ConfirmClose { ids, quit } => self.confirm_close_dialog(ui, ids, *quit),
+                Dialog::ConfirmClose { ids, then } => self.confirm_close_dialog(ui, ids, then),
                 Dialog::LoadDefault(state) => self.load_default_dialog(ui, state),
                 Dialog::Remix(state) => self.remix_dialog(ui, state),
+                Dialog::Shortcuts => shortcuts_dialog(ui),
+                Dialog::About => about_dialog(ui),
             };
         });
         // Escape or a click outside cancels.
@@ -449,14 +474,22 @@ impl App {
         cancel
     }
 
-    fn confirm_close_dialog(&mut self, ui: &mut egui::Ui, ids: &[u64], quit: bool) -> bool {
+    fn confirm_close_dialog(&mut self, ui: &mut egui::Ui, ids: &[u64], then: &Then) -> bool {
         header(ui, icons::WARNING, "Unsaved Changes");
-        let pack_meta = quit && self.pack_dirty();
+        let pack_meta = then.includes_pack_meta() && self.pack_dirty();
         let count = ids.len() + usize::from(pack_meta);
-        ui.label(if count == 1 {
-            "This file has unsaved changes:".to_owned()
+        let files = if count == 1 {
+            "This file has".to_owned()
         } else {
-            format!("These {count} files have unsaved changes:")
+            format!("These {count} files have")
+        };
+        ui.label(match then {
+            Then::CloseTabs | Then::Quit => format!("{files} unsaved changes:"),
+            Then::OpenPack(_) => format!("{files} unsaved changes. Save before switching packs?"),
+            Then::Export => format!(
+                "{files} unsaved changes. The zip is made from the files on disk, so save first \
+                 to include them."
+            ),
         });
         ui.add_space(SPACE_S);
         egui::ScrollArea::vertical()
@@ -475,42 +508,161 @@ impl App {
         ui.add_space(SPACE_L);
         let enter = ui.input(|i| i.key_pressed(Key::Enter));
         let (mut save, mut discard, mut cancel) = (false, false, false);
+        let (save_label, discard_label, discard_hint) = match then {
+            Then::Export => (
+                "Save and Export",
+                "Export Without Them",
+                "Export the files as they are on disk; your edits stay open",
+            ),
+            _ if count == 1 => ("Save", "Don't Save", "Close and lose the changes"),
+            _ => ("Save All", "Don't Save", "Close and lose the changes"),
+        };
         egui::Sides::new().show(
             ui,
             |ui| {
-                discard = widgets::secondary_button(ui, "Don't Save")
-                    .on_hover_text("Close and lose the changes")
+                discard = widgets::secondary_button(ui, discard_label)
+                    .on_hover_text(discard_hint)
                     .clicked();
             },
             |ui| {
-                let label = if count == 1 { "Save" } else { "Save All" };
-                save = widgets::primary_button(ui, true, label).clicked();
+                save = widgets::primary_button(ui, true, save_label).clicked();
                 cancel = widgets::secondary_button(ui, "Cancel").clicked();
             },
         );
         save |= enter;
 
-        if save || discard {
-            if save {
-                let saved = ids.iter().all(|id| self.save_editor(*id))
-                    && (!pack_meta || self.save_pack_meta());
-                if !saved {
-                    return true; // the failure is reported; keep the tabs open
-                }
-            } else if pack_meta {
-                self.revert_pack_meta();
+        if !(save || discard) {
+            return cancel;
+        }
+        if save {
+            let saved =
+                ids.iter().all(|id| self.save_editor(*id)) && (!pack_meta || self.save_pack_meta());
+            if !saved {
+                return true; // the failure is reported; keep the tabs open
             }
-            for id in ids {
-                self.close_editor(*id);
-            }
-            if quit {
+        }
+        if *then == Then::Export {
+            self.export_zip();
+            return true;
+        }
+        if discard && pack_meta {
+            self.revert_pack_meta();
+        }
+        for id in ids {
+            self.close_editor(*id);
+        }
+        match then {
+            Then::Quit => {
                 self.allow_quit = true;
                 ui.send_viewport_cmd(egui::ViewportCommand::Close);
             }
-            return true;
+            Then::OpenPack(root) => self.open_pack(root.clone()),
+            Then::CloseTabs | Then::Export => {}
         }
-        cancel
+        true
     }
+}
+
+/// Mouse gestures that have no command of their own, for the shortcut sheet.
+const MOUSE_HINTS: &[(&str, &str, &str)] = &[
+    (
+        "Paint with the primary / secondary colour",
+        "Left / right button",
+        "Texture",
+    ),
+    ("Pick a colour from the canvas", "Hold Alt", "Texture"),
+    ("Pan", "Middle-drag or Space+drag", "Texture"),
+    ("Zoom towards the cursor", "Scroll or pinch", "Texture"),
+    ("Orbit / pan the camera", "Left-drag / right-drag", "Model"),
+    ("Select an element", "Click it", "Model"),
+];
+
+/// Every command's shortcuts, grouped by menu, read straight from the command registry.
+fn shortcuts_dialog(ui: &mut egui::Ui) -> bool {
+    header(ui, icons::KEYBOARD, "Keyboard Shortcuts");
+    let ctx = ui.ctx().clone();
+    egui::ScrollArea::vertical()
+        .max_height(ctx.content_rect().height() * 0.6)
+        .show(ui, |ui| {
+            for category in ["File", "Edit", "View", "Tools", "Help"] {
+                let commands: Vec<Command> = Command::all()
+                    .filter(|c| c.category() == category && !c.shortcuts().is_empty())
+                    .collect();
+                if commands.is_empty() {
+                    continue;
+                }
+                widgets::caption(ui, &category.to_uppercase());
+                shortcut_grid(ui, category, |ui| {
+                    for command in commands {
+                        let keys: Vec<String> = command
+                            .shortcuts()
+                            .iter()
+                            .map(|s| ctx.format_shortcut(s))
+                            .collect();
+                        shortcut_row(
+                            ui,
+                            command.icon(),
+                            command.label().trim_end_matches('…'),
+                            &keys.join("  or  "),
+                            command.context(),
+                        );
+                    }
+                });
+                ui.add_space(SPACE_M);
+            }
+            widgets::caption(ui, "MOUSE");
+            shortcut_grid(ui, "mouse", |ui| {
+                for (action, gesture, context) in MOUSE_HINTS {
+                    shortcut_row(ui, icons::INFO, action, gesture, context);
+                }
+            });
+        });
+    ui.add_space(SPACE_S);
+    ui.weak("Every command, with or without a shortcut, is also in the Command Palette.");
+    footer_close(ui)
+}
+
+fn shortcut_grid(ui: &mut egui::Ui, id: &str, add_rows: impl FnOnce(&mut egui::Ui)) {
+    egui::Grid::new(("shortcuts", id))
+        .num_columns(3)
+        .spacing([SPACE_L, SPACE_S])
+        .striped(true)
+        .min_col_width(120.0)
+        .show(ui, add_rows);
+}
+
+fn shortcut_row(ui: &mut egui::Ui, glyph: &str, label: &str, keys: &str, context: &str) {
+    ui.label(widgets::icon_label(glyph, label));
+    ui.label(RichText::new(keys).monospace().strong());
+    ui.weak(context);
+    ui.end_row();
+}
+
+/// A dialog footer with a single Close button; Enter closes too. Returns true when closed.
+fn footer_close(ui: &mut egui::Ui) -> bool {
+    ui.add_space(SPACE_L);
+    let enter = ui.input(|i| i.key_pressed(Key::Enter));
+    let mut close = false;
+    egui::Sides::new().show(
+        ui,
+        |_| {},
+        |ui| close = widgets::primary_button(ui, true, "Close").clicked(),
+    );
+    close || enter
+}
+
+fn about_dialog(ui: &mut egui::Ui) -> bool {
+    header(ui, icons::PACKAGE, "About OpenPax");
+    ui.label(RichText::new(format!("Version {}", env!("CARGO_PKG_VERSION"))).strong());
+    ui.label("An open-source studio for making Minecraft: Java Edition resource packs.");
+    ui.add_space(SPACE_S);
+    ui.hyperlink_to(
+        widgets::icon_label(icons::BOOK, "Project page and documentation"),
+        env!("CARGO_PKG_REPOSITORY"),
+    );
+    ui.add_space(SPACE_S);
+    ui.weak("Licensed under MIT or Apache-2.0. Not affiliated with Mojang or Microsoft.");
+    footer_close(ui)
 }
 
 #[cfg(test)]

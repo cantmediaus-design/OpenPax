@@ -1,5 +1,8 @@
 use crate::{Element, ModelFile};
 
+/// Undo steps kept per model; older steps are forgotten.
+pub const MAX_UNDO_STEPS: usize = 200;
+
 /// A model being edited: the file contents plus selection and undo history.
 #[derive(Debug)]
 pub struct ModelDocument {
@@ -74,6 +77,9 @@ impl ModelDocument {
         let merge = key.is_some() && key == self.coalescing && !self.undo.is_empty();
         if !merge {
             self.undo.push(before);
+            if self.undo.len() > MAX_UNDO_STEPS {
+                self.undo.remove(0);
+            }
         }
         self.coalescing = key;
         self.redo.clear();
@@ -194,6 +200,19 @@ mod tests {
         doc.undo();
         doc.modify(|m| m.parent = Some("block/cube".into()));
         assert!(!doc.can_redo());
+    }
+
+    #[test]
+    fn undo_history_is_capped() {
+        let mut doc = ModelDocument::new(ModelFile::default());
+        for i in 0..MAX_UNDO_STEPS + 20 {
+            doc.modify(|m| m.parent = Some(format!("block/{i}")));
+        }
+        let mut steps = 0;
+        while doc.undo() {
+            steps += 1;
+        }
+        assert_eq!(steps, MAX_UNDO_STEPS);
     }
 
     #[test]

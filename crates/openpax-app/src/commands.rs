@@ -27,6 +27,9 @@ pub enum Command {
     // Edit
     Undo,
     Redo,
+    Cut,
+    Copy,
+    Paste,
     SelectAll,
     Deselect,
     ClearSelection,
@@ -49,6 +52,10 @@ pub enum Command {
     ToggleExplorer,
     ToggleInspector,
     FocusSearch,
+    OpenPalette,
+    // Help
+    ShowShortcuts,
+    About,
     Tool(ToolKind),
 }
 
@@ -103,7 +110,7 @@ const fn cmd_shift(logical_key: Key) -> KeyboardShortcut {
 }
 
 impl Command {
-    const FIXED: [Self; 36] = [
+    const FIXED: [Self; 42] = [
         Self::NewPack,
         Self::OpenPack,
         Self::ImportZip,
@@ -119,6 +126,9 @@ impl Command {
         Self::Quit,
         Self::Undo,
         Self::Redo,
+        Self::Cut,
+        Self::Copy,
+        Self::Paste,
         Self::SelectAll,
         Self::Deselect,
         Self::ClearSelection,
@@ -140,6 +150,9 @@ impl Command {
         Self::ToggleExplorer,
         Self::ToggleInspector,
         Self::FocusSearch,
+        Self::OpenPalette,
+        Self::ShowShortcuts,
+        Self::About,
     ];
 
     pub fn all() -> impl Iterator<Item = Self> {
@@ -165,6 +178,9 @@ impl Command {
             Self::Quit => "Quit",
             Self::Undo => "Undo",
             Self::Redo => "Redo",
+            Self::Cut => "Cut",
+            Self::Copy => "Copy",
+            Self::Paste => "Paste as New Layer",
             Self::SelectAll => "Select All",
             Self::Deselect => "Deselect",
             Self::ClearSelection => "Clear Selection",
@@ -186,6 +202,9 @@ impl Command {
             Self::ToggleExplorer => "Explorer",
             Self::ToggleInspector => "Inspector",
             Self::FocusSearch => "Search Assets",
+            Self::OpenPalette => "Command Palette…",
+            Self::ShowShortcuts => "Keyboard Shortcuts",
+            Self::About => "About OpenPax",
             Self::Tool(tool) => tool.name(),
         }
     }
@@ -206,6 +225,9 @@ impl Command {
             Self::Quit => icons::QUIT,
             Self::Undo => icons::UNDO,
             Self::Redo => icons::REDO,
+            Self::Cut => icons::SCISSORS,
+            Self::Copy => icons::COPY,
+            Self::Paste => icons::CLIPBOARD,
             Self::SelectAll | Self::Deselect => icons::SELECT,
             Self::ClearSelection => icons::ERASER,
             Self::FlipHorizontal => icons::FLIP_H,
@@ -224,6 +246,9 @@ impl Command {
             Self::ResetView => icons::HOME,
             Self::ToggleExplorer | Self::ToggleInspector => icons::SIDEBAR,
             Self::FocusSearch => icons::SEARCH,
+            Self::OpenPalette => icons::COMMAND,
+            Self::ShowShortcuts => icons::KEYBOARD,
+            Self::About => icons::INFO,
             Self::Tool(tool) => icons::tool(tool),
         }
     }
@@ -248,6 +273,11 @@ impl Command {
             Self::Rescan => keys![key(Key::F5)],
             Self::Undo => keys![cmd(Key::Z)],
             Self::Redo => keys![cmd_shift(Key::Z), cmd(Key::Y)],
+            // egui turns these into clipboard events rather than key presses; listed so menus
+            // and the shortcut sheet show them.
+            Self::Cut => keys![cmd(Key::X)],
+            Self::Copy => keys![cmd(Key::C)],
+            Self::Paste => keys![cmd(Key::V)],
             Self::SelectAll => keys![cmd(Key::A)],
             Self::Deselect => keys![cmd(Key::D), key(Key::Escape)],
             Self::ClearSelection | Self::DeleteElement => keys![key(Key::Delete)],
@@ -262,6 +292,8 @@ impl Command {
             Self::ToggleExplorer => keys![cmd(Key::B)],
             Self::ToggleInspector => keys![cmd(Key::I)],
             Self::FocusSearch => keys![cmd(Key::F)],
+            Self::OpenPalette => keys![cmd_shift(Key::P), cmd(Key::K)],
+            Self::ShowShortcuts => keys![key(Key::F1), cmd(Key::Slash)],
             Self::Tool(tool) => match tool {
                 ToolKind::Pencil => keys![key(Key::B)],
                 ToolKind::Eraser => keys![key(Key::E)],
@@ -282,7 +314,66 @@ impl Command {
             | Self::FlipVertical
             | Self::ResizeCanvas
             | Self::AddCube
-            | Self::ToggleTiling => &[],
+            | Self::ToggleTiling
+            | Self::About => &[],
+        }
+    }
+
+    /// The menu this command belongs to, for grouping in the shortcut sheet and the palette.
+    pub fn category(self) -> &'static str {
+        match self {
+            Self::NewPack
+            | Self::OpenPack
+            | Self::ImportZip
+            | Self::LoadDefaultPack
+            | Self::Remix
+            | Self::NewTexture
+            | Self::NewModel
+            | Self::Save
+            | Self::SaveAll
+            | Self::CloseTab
+            | Self::ExportZip
+            | Self::Rescan
+            | Self::Quit => "File",
+            Self::Undo
+            | Self::Redo
+            | Self::Cut
+            | Self::Copy
+            | Self::Paste
+            | Self::SelectAll
+            | Self::Deselect
+            | Self::ClearSelection
+            | Self::FlipHorizontal
+            | Self::FlipVertical
+            | Self::ResizeCanvas
+            | Self::SwapColors
+            | Self::BrushSmaller
+            | Self::BrushLarger
+            | Self::AddCube
+            | Self::DuplicateElement
+            | Self::DeleteElement => "Edit",
+            Self::ZoomIn
+            | Self::ZoomOut
+            | Self::ZoomFit
+            | Self::ToggleGrid
+            | Self::ToggleTiling
+            | Self::ResetView
+            | Self::ToggleExplorer
+            | Self::ToggleInspector
+            | Self::FocusSearch
+            | Self::OpenPalette => "View",
+            Self::Tool(_) => "Tools",
+            Self::ShowShortcuts | Self::About => "Help",
+        }
+    }
+
+    /// Where the command applies, for the shortcut sheet.
+    pub fn context(self) -> &'static str {
+        match self.needs() {
+            Needs::Nothing | Needs::Pack | Needs::Tab | Needs::History => "",
+            Needs::Texture => "Texture",
+            Needs::Model => "Model",
+            Needs::TextureOrModel => "Texture, model",
         }
     }
 
@@ -299,7 +390,10 @@ impl Command {
             | Self::Remix
             | Self::Quit
             | Self::ToggleExplorer
-            | Self::ToggleInspector => Needs::Nothing,
+            | Self::ToggleInspector
+            | Self::OpenPalette
+            | Self::ShowShortcuts
+            | Self::About => Needs::Nothing,
             Self::NewTexture
             | Self::NewModel
             | Self::SaveAll
@@ -308,7 +402,10 @@ impl Command {
             | Self::FocusSearch => Needs::Pack,
             Self::Save | Self::CloseTab => Needs::Tab,
             Self::Undo | Self::Redo => Needs::History,
-            Self::SelectAll
+            Self::Cut
+            | Self::Copy
+            | Self::Paste
+            | Self::SelectAll
             | Self::Deselect
             | Self::ClearSelection
             | Self::FlipHorizontal
@@ -344,6 +441,7 @@ impl Command {
                 | Self::FocusSearch
                 | Self::ToggleExplorer
                 | Self::ToggleInspector
+                | Self::OpenPalette
         )
     }
 

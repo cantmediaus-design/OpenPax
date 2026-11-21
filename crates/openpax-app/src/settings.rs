@@ -7,6 +7,30 @@ use crate::editor::ToolState;
 use crate::theme::ThemeChoice;
 
 pub const SETTINGS_KEY: &str = "settings";
+pub const SESSIONS_KEY: &str = "sessions";
+/// Packs whose open tabs are remembered.
+const MAX_SESSIONS: usize = 16;
+
+/// The tabs that were open in one pack, so reopening the pack picks up where it left off.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PackSession {
+    /// The pack folder.
+    pub pack: String,
+    /// Asset paths of the open tabs, in tab order.
+    pub tabs: Vec<String>,
+    /// The tab that had focus.
+    pub active: Option<String>,
+}
+
+/// Remembers `session` as the most recent one, replacing any older entry for the same pack.
+pub fn remember_session(sessions: &mut Vec<PackSession>, session: PackSession) {
+    sessions.retain(|s| s.pack != session.pack);
+    if !session.tabs.is_empty() {
+        sessions.insert(0, session);
+    }
+    sessions.truncate(MAX_SESSIONS);
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -130,6 +154,30 @@ mod tests {
         assert_eq!(back.secondary, tools.secondary);
         assert_eq!(back.palette, tools.palette);
         assert_eq!(back.recent, tools.recent);
+    }
+
+    #[test]
+    fn sessions_keep_one_entry_per_pack_newest_first() {
+        let session = |pack: &str, tabs: &[&str]| PackSession {
+            pack: pack.to_owned(),
+            tabs: tabs.iter().map(|t| (*t).to_owned()).collect(),
+            active: tabs.first().map(|t| (*t).to_owned()),
+        };
+        let mut sessions = Vec::new();
+        remember_session(&mut sessions, session("a", &["x.png"]));
+        remember_session(&mut sessions, session("b", &["y.png"]));
+        remember_session(&mut sessions, session("a", &["z.png"]));
+        assert_eq!(sessions.len(), 2);
+        assert_eq!(sessions[0], session("a", &["z.png"]));
+
+        // Closing every tab forgets the pack's session.
+        remember_session(&mut sessions, session("a", &[]));
+        assert_eq!(sessions, [session("b", &["y.png"])]);
+
+        for i in 0..40 {
+            remember_session(&mut sessions, session(&i.to_string(), &["t.png"]));
+        }
+        assert_eq!(sessions.len(), MAX_SESSIONS);
     }
 
     #[test]

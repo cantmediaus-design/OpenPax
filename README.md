@@ -23,7 +23,10 @@ building models and animating them. It is early software; see the roadmap for wh
   numbers, JSON validation that jumps to the problem, and one-click formatting.
 - **Interface**: dark and light themes (View → Theme), drag a pack folder, zip or PNG onto the
   window to open or import it, and tool settings, colours and palette are remembered between
-  sessions.
+  sessions. Each pack reopens with the tabs you had open. A command palette finds any command
+  or file by name, and Help → Keyboard Shortcuts lists every binding.
+- **Clipboard**: copy, cut and paste pixels, including to and from other apps; a paste lands
+  on a new layer, ready to drag into place with the Move tool.
 
 ### Keyboard and mouse
 
@@ -31,6 +34,9 @@ building models and animating them. It is early software; see the roadmap for wh
 |---|---|
 | Save / Save All / Close Tab | Ctrl+S / Ctrl+Shift+S / Ctrl+W |
 | Undo / Redo | Ctrl+Z / Ctrl+Shift+Z or Ctrl+Y |
+| Command palette (every command, and Go to File) | Ctrl+Shift+P or Ctrl+K |
+| Keyboard shortcut sheet | F1 or Ctrl+/ |
+| Cut / Copy / Paste pixels | Ctrl+X / Ctrl+C / Ctrl+V |
 | Search assets | Ctrl+F |
 | Show or hide the explorer / inspector | Ctrl+B / Ctrl+I |
 | Pixel tools | B pencil, E eraser, G fill, I picker, L line, R rectangle, O ellipse, M select, V move |
