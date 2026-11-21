@@ -3,7 +3,9 @@
 An open-source studio for making Minecraft: Java Edition resource packs, written entirely in Rust.
 
 [![CI](https://github.com/cantmediaus-design/OpenPax/actions/workflows/ci.yml/badge.svg)](https://github.com/cantmediaus-design/OpenPax/actions/workflows/ci.yml)
-**Website: [cantmediaus-design.github.io/OpenPax](https://cantmediaus-design.github.io/OpenPax/)**
+[![Latest release](https://img.shields.io/github/v/release/cantmediaus-design/OpenPax?include_prereleases&label=download)](https://github.com/cantmediaus-design/OpenPax/releases/latest)
+**Website: [cantmediaus-design.github.io/OpenPax](https://cantmediaus-design.github.io/OpenPax/)** ·
+**[Download the latest release](https://github.com/cantmediaus-design/OpenPax/releases/latest)**
 
 OpenPax aims to be one desktop app for the whole job: managing the pack, drawing textures,
 building models and animating them. It is early software; see the roadmap for what exists today.
@@ -74,6 +76,12 @@ flattened image, and `.openpax` is left out of exported zips.
 3. **Pack tooling**: validation, blockstate / item definition / language / sound / font editors,
    multi-version overlays.
 4. Bedrock Edition support.
+
+## Download
+
+Ready-made builds for Windows, macOS (Apple silicon and Intel) and Linux are on the
+[releases page](https://github.com/cantmediaus-design/OpenPax/releases/latest). Unpack the archive
+anywhere and run `openpax`; each archive also includes the `openpax-cli` command-line tool.
 
 ## Building
 
