@@ -8,6 +8,8 @@ An open-source studio for making Minecraft: Java Edition resource packs, written
 OpenPax aims to be one desktop app for the whole job: managing the pack, drawing textures,
 building models and animating them. It is early software; see the roadmap for what exists today.
 
+![The OpenPax 3D model editor with a demo lamp post model open](docs/img/model.webp)
+
 ## What works today
 
 - **Packs**: create a new pack for a chosen game version, open a pack folder, import a `.zip`,

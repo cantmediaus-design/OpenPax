@@ -8,6 +8,7 @@
 <meta property="og:title" content="OpenPax">
 <meta property="og:description" content="One open-source desktop app for the whole resource pack job: packs, pixels, animation and models. Written in Rust.">
 <meta property="og:type" content="website">
+<meta property="og:image" content="https://cantmediaus-design.github.io/OpenPax/img/og.jpg">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'%3E%3Crect width='8' height='8' fill='%2316a34a'/%3E%3Crect x='1' y='1' width='6' height='6' fill='%2322c55e'/%3E%3Crect x='2' y='2' width='2' height='2' fill='%23bbf7d0'/%3E%3Crect x='4' y='4' width='2' height='2' fill='%2315803d'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -202,6 +203,19 @@ table.crates td { padding: 12px 10px; border-bottom: 1px solid var(--line); vert
 table.crates td:first-child { white-space: nowrap; font-family: "JetBrains Mono", monospace; font-size: 13px; color: var(--accent); }
 table.crates td:last-child { color: var(--muted); }
 
+/* screenshots */
+.shots-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+.shots-tabs button {
+  font: 600 14px Inter, sans-serif; color: var(--muted); cursor: pointer;
+  padding: 8px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel);
+}
+.shots-tabs button:hover { color: var(--text); }
+.shots-tabs button[aria-selected="true"] { color: var(--accent-ink); background: var(--accent-2); border-color: var(--accent-2); }
+.shot { margin: 0; }
+.shot a { display: block; border-radius: 12px; overflow: hidden; border: 1px solid var(--line); box-shadow: 0 30px 80px rgba(0,0,0,.5); background: var(--panel); }
+.shot img { display: block; width: 100%; height: auto; }
+.shot figcaption { margin-top: 14px; color: var(--muted); font-size: 15px; text-align: center; }
+
 /* footer */
 footer { padding: 48px 0 64px; color: var(--muted); font-size: 14px; }
 footer .wrap { display: flex; flex-wrap: wrap; gap: 24px; justify-content: space-between; }
@@ -214,6 +228,7 @@ footer p { margin: 4px 0; }
   <div class="wrap">
     <a class="brand" href="#"><canvas class="logo" width="8" height="8" data-logo></canvas>OpenPax</a>
     <div class="links">
+      <a class="opt" href="#screens">Screenshots</a>
       <a href="#features">Features</a>
       <a class="opt" href="#shortcuts">Shortcuts</a>
       <a class="opt" href="#roadmap">Roadmap</a>
@@ -262,6 +277,26 @@ footer p { margin: 4px 0; }
     </div>
   </div>
 </header>
+
+<section id="screens" class="alt">
+  <div class="wrap">
+    <div class="eyebrow">See it</div>
+    <h2>A tour of the app</h2>
+    <p class="sub">These are real screenshots of OpenPax with a demo pack open. Every texture and model in them was made for the demo.</p>
+    <div class="shots-tabs" role="tablist" aria-label="Screenshots">
+      <button role="tab" aria-selected="true" data-shot="0">Pixel editor</button>
+      <button role="tab" aria-selected="false" data-shot="1">3D models</button>
+      <button role="tab" aria-selected="false" data-shot="2">Animation</button>
+      <button role="tab" aria-selected="false" data-shot="3">Explorer</button>
+    </div>
+    <figure class="shot">
+      <a id="shot-link" href="img/pixel.webp" target="_blank" rel="noopener">
+        <img id="shot-img" src="img/pixel.webp" width="1440" height="931" alt="The OpenPax pixel editor with a crystal ore texture open, the tool bar on the left and colour, palette and layer panels on the right.">
+      </a>
+      <figcaption id="shot-cap">The pixel editor: tools on the left; colour, palette, layers and texture settings on the right.</figcaption>
+    </figure>
+  </div>
+</section>
 
 <section id="features">
   <div class="wrap">
@@ -471,6 +506,26 @@ footer p { margin: 4px 0; }
 
   document.querySelectorAll("[data-copy]").forEach(b => b.onclick = async () => {
     try { await navigator.clipboard.writeText(b.dataset.copy); b.textContent = "copied"; setTimeout(() => b.textContent = "copy", 1500); } catch (_) {}
+  });
+
+  // screenshot tabs
+  const SHOTS = [
+    ["pixel", "The pixel editor: tools on the left; colour, palette, layers and texture settings on the right.",
+     "The OpenPax pixel editor with a crystal ore texture open, the tool bar on the left and colour, palette and layer panels on the right."],
+    ["model", "The 3D model editor: the pack's own textures in a wgpu viewport, with per-element position, size and per-face texture and UV.",
+     "The OpenPax 3D model editor showing a lamp post block model built from five cubes, with the element list and face settings on the right."],
+    ["animation", "Texture animation: frame time, interpolation, onion skin and playback order, with every frame of the strip in view.",
+     "An eight-frame glowing mushroom animation strip in OpenPax, with the animation settings and playback order on the right."],
+    ["explorer", "The explorer's thumbnail grid: every model, blockstate, language file and texture in the pack at a glance.",
+     "The OpenPax explorer in grid view with thumbnails of the pack's textures, and a copper tile texture open in the editor."],
+  ];
+  const tabs = document.querySelectorAll(".shots-tabs button");
+  const shotImg = document.getElementById("shot-img"), shotLink = document.getElementById("shot-link"), shotCap = document.getElementById("shot-cap");
+  SHOTS.forEach(([n]) => { const i = new Image(); i.src = `img/${n}.webp`; });
+  tabs.forEach(t => t.onclick = () => {
+    const [n, cap, alt] = SHOTS[+t.dataset.shot];
+    tabs.forEach(b => b.setAttribute("aria-selected", String(b === t)));
+    shotImg.src = shotLink.href = `img/${n}.webp`; shotImg.alt = alt; shotCap.textContent = cap;
   });
 
   seed(); syncSw(); draw();
