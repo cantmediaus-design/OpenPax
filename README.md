@@ -2,6 +2,9 @@
 
 An open-source studio for making Minecraft: Java Edition resource packs, written entirely in Rust.
 
+[![CI](https://github.com/cantmediaus-design/OpenPax/actions/workflows/ci.yml/badge.svg)](https://github.com/cantmediaus-design/OpenPax/actions/workflows/ci.yml)
+**Website: [cantmediaus-design.github.io/OpenPax](https://cantmediaus-design.github.io/OpenPax/)**
+
 OpenPax aims to be one desktop app for the whole job: managing the pack, drawing textures,
 building models and animating them. It is early software; see the roadmap for what exists today.
 

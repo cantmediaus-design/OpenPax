@@ -6,7 +6,8 @@ members = ["crates/*"]
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/openpax/openpax"
+repository = "https://github.com/cantmediaus-design/OpenPax"
+homepage = "https://cantmediaus-design.github.io/OpenPax/"
 
 [workspace.dependencies]
 openpax-core = { path = "crates/openpax-core" }
