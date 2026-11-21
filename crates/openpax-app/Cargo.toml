@@ -1,0 +1,28 @@
+[package]
+name = "openpax-app"
+description = "OpenPax: an open-source Minecraft resource pack studio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "openpax"
+path = "src/main.rs"
+
+[dependencies]
+openpax-core.workspace = true
+openpax-paint.workspace = true
+eframe.workspace = true
+egui_dock.workspace = true
+rfd.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+log.workspace = true
+env_logger.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
