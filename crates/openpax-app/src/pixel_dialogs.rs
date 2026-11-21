@@ -94,6 +94,13 @@ pub enum PixelDialog {
         frames: Vec<AnimFrame>,
         path: String,
     },
+    /// An image or animation dropped on the window.
+    DropImage {
+        frames: Vec<AnimFrame>,
+        name: String,
+        texture_open: bool,
+        path: std::path::PathBuf,
+    },
     Scripts {
         scripts: Vec<openpax_script::ScriptFile>,
         selected: Option<usize>,
@@ -954,6 +961,106 @@ impl App {
                 }
                 confirm || cancel
             }
+            PixelDialog::DropImage {
+                frames,
+                name,
+                texture_open,
+                path,
+            } => {
+                header(ui, icons::DOWNLOAD, "Add Image");
+                let (w, h) = frames
+                    .first()
+                    .map_or((0, 0), |f| (f.image.width(), f.image.height()));
+                ui.label(format!("{name}: {w} × {h} px, {} frame(s)", frames.len()));
+                ui.add_space(SPACE_S);
+                let mut choice = None;
+                ui.add_enabled_ui(*texture_open, |ui| {
+                    if ui
+                        .button(crate::widgets::icon_label(
+                            icons::LAYERS,
+                            "Add as a new layer",
+                        ))
+                        .clicked()
+                    {
+                        choice = Some(DropChoice::Layer);
+                    }
+                    if ui
+                        .button(crate::widgets::icon_label(
+                            icons::IMAGES,
+                            "Add as a reference image",
+                        ))
+                        .on_hover_text("Shown while you work, never saved into the texture")
+                        .clicked()
+                    {
+                        choice = Some(DropChoice::Reference);
+                    }
+                    if frames.len() > 1
+                        && ui
+                            .button(crate::widgets::icon_label(
+                                icons::ANIMATION,
+                                "Add its frames after the current frame",
+                            ))
+                            .clicked()
+                    {
+                        choice = Some(DropChoice::Frames);
+                    }
+                });
+                if ui
+                    .button(crate::widgets::icon_label(
+                        icons::IMAGE,
+                        "Make it a new texture in the pack",
+                    ))
+                    .clicked()
+                {
+                    choice = Some(DropChoice::Texture);
+                }
+                ui.add_space(SPACE_M);
+                let cancel = ui.button("Cancel").clicked();
+                let still_png = frames.len() == 1
+                    && path
+                        .extension()
+                        .is_some_and(|e| e.eq_ignore_ascii_case("png"));
+                match choice {
+                    Some(DropChoice::Texture) if still_png => {
+                        self.open_dialog(crate::dialogs::Dialog::import_texture(path.clone()));
+                        true
+                    }
+                    Some(DropChoice::Texture) => {
+                        let frames = std::mem::take(frames);
+                        self.open_pixel_dialog(PixelDialog::ImportAnimation {
+                            frames,
+                            path: format!("block/{name}"),
+                        });
+                        true
+                    }
+                    Some(choice) => {
+                        if let Some(e) = texture_mut(&mut self.editors, self.active) {
+                            let first = frames[0].image.clone();
+                            match choice {
+                                DropChoice::Layer => e.doc.paste(&first, (0, 0)),
+                                DropChoice::Reference => e.doc.add_reference_layer(name, &first),
+                                _ => {
+                                    let (w, h) = (e.doc.width(), e.doc.height());
+                                    let added: Vec<(openpax_paint::Bitmap, u32)> = frames
+                                        .iter()
+                                        .map(|f| (f.image.resized(w, h), f.duration_ms))
+                                        .collect();
+                                    e.doc.batch("Add frames", |doc| {
+                                        for (image, ms) in &added {
+                                            doc.add_frame(false);
+                                            doc.set_frame_duration(doc.current_frame(), *ms);
+                                            doc.paste_floating(image, (0, 0));
+                                            doc.commit_floating();
+                                        }
+                                    });
+                                }
+                            }
+                        }
+                        true
+                    }
+                    None => cancel,
+                }
+            }
             PixelDialog::Scripts {
                 scripts,
                 selected,
@@ -1212,4 +1319,12 @@ fn preset_ui(
 pub fn use_as_document_palette(doc: &mut Document, palette: &Palette) {
     let colors = palette.colors.clone();
     doc.edit_extras("Document palette", |e| e.palette = colors);
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DropChoice {
+    Layer,
+    Reference,
+    Frames,
+    Texture,
 }

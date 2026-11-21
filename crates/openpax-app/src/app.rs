@@ -944,6 +944,8 @@ impl App {
                 }
             } else if extension.as_deref() == Some("zip") {
                 self.import_zip(Some(path));
+            } else if self.dropped_pixel_file(&path, extension.as_deref()) {
+                // Handled by the pixel editor (palettes, images onto an open texture).
             } else if extension.as_deref() == Some("png") {
                 if self.pack.is_some() {
                     self.open_dialog(Dialog::import_texture(path));
@@ -979,7 +981,7 @@ impl App {
         painter.text(
             rect.center(),
             egui::Align2::CENTER_CENTER,
-            "Drop a pack folder, a pack .zip, or a .png texture",
+            "Drop a pack folder, a pack .zip, an image or animation, or a palette",
             egui::FontId::proportional(20.0),
             egui::Color32::WHITE,
         );

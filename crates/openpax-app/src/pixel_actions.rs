@@ -383,13 +383,16 @@ impl App {
 
     fn import_palette(&mut self) {
         let extensions: Vec<&str> = PaletteFormat::ALL.iter().map(|f| f.extension()).collect();
-        let Some(path) = rfd::FileDialog::new()
+        if let Some(path) = rfd::FileDialog::new()
             .set_title("Import palette")
             .add_filter("Palettes", &extensions)
             .pick_file()
-        else {
-            return;
-        };
+        {
+            self.import_palette_file(&path);
+        }
+    }
+
+    fn import_palette_file(&mut self, path: &std::path::Path) {
         let ext = path
             .extension()
             .map(|e| e.to_string_lossy().into_owned())
@@ -397,7 +400,7 @@ impl App {
         let result = PaletteFormat::from_extension(&ext)
             .ok_or_else(|| format!("Unknown palette format .{ext}"))
             .and_then(|f| {
-                std::fs::read(&path)
+                std::fs::read(path)
                     .map_err(|e| e.to_string())
                     .and_then(|b| Palette::decode(&b, f))
             });
@@ -416,6 +419,43 @@ impl App {
         }
     }
 
+    /// Handles a file dropped on the window: palettes are imported, images and animations
+    /// can become a layer, a reference image, frames or a new texture. Returns false for
+    /// files it leaves to the rest of the app.
+    pub(crate) fn dropped_pixel_file(&mut self, path: &std::path::Path, ext: Option<&str>) -> bool {
+        let ext = ext.unwrap_or("");
+        if matches!(PaletteFormat::from_extension(ext), Some(f) if f != PaletteFormat::Png) {
+            self.import_palette_file(path);
+            return true;
+        }
+        let image = matches!(
+            ext,
+            "png" | "gif" | "webp" | "apng" | "jpg" | "jpeg" | "bmp" | "tga"
+        );
+        let texture_open = self.active_kind() == crate::commands::Active::Texture;
+        if !image || self.pack.is_none() || (ext == "png" && !texture_open) {
+            return false;
+        }
+        match std::fs::read(path)
+            .map_err(|e| e.to_string())
+            .and_then(|b| openpax_paint::export::decode_animation(&b).map_err(|e| e.to_string()))
+        {
+            Ok(frames) if !frames.is_empty() => {
+                let name = path
+                    .file_stem()
+                    .map_or("image".into(), |s| s.to_string_lossy().to_lowercase());
+                self.open_pixel_dialog(PixelDialog::DropImage {
+                    frames,
+                    name,
+                    texture_open,
+                    path: path.to_owned(),
+                });
+            }
+            Ok(_) => self.warn("The file has no image in it."),
+            Err(e) => self.error(format!("Could not read {}:\n{e}", path.display())),
+        }
+        true
+    }
     fn export_palette(&mut self) {
         let extensions: Vec<&str> = PaletteFormat::ALL.iter().map(|f| f.extension()).collect();
         let Some(path) = rfd::FileDialog::new()
