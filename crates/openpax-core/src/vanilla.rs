@@ -159,6 +159,22 @@ pub fn cached_versions(cache: &Path) -> Vec<String> {
     ids
 }
 
+/// A downloaded default pack whose resource format is `format`, if there is one (the newest
+/// such version).
+pub fn cached_for_format(cache: &Path, format: u32) -> Option<PathBuf> {
+    cached_versions(cache)
+        .into_iter()
+        .rev()
+        .map(|name| cache.join(name))
+        .find(|dir| {
+            fs::read_to_string(dir.join("pack.mcmeta"))
+                .ok()
+                .and_then(|text| serde_json::from_str::<crate::PackMeta>(&text).ok())
+                .and_then(|meta| meta.format())
+                == Some(format)
+        })
+}
+
 /// Returns the cached pack folder for `version`, downloading and extracting it first if needed.
 pub fn ensure_version(
     cache: &Path,

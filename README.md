@@ -24,6 +24,12 @@ building models and animating them. It is early software; see the roadmap for wh
   texture, or import an image.
 - **Crash recovery**: unsaved edits are copied to `.openpax/recovery` every 20 seconds and
   offered back if OpenPax did not close normally.
+- **Pack check**: File → Check Pack for Problems lists broken JSON, models, textures and
+  sounds that are referenced but missing, names Minecraft will not load, parent models that
+  loop and animations that do not fit their texture; click a problem to open its file.
+  References to Minecraft's own files are checked too once the default pack for the same
+  game version has been downloaded. `openpax-cli validate-pack <folder>` does the same from
+  a terminal or CI, exiting with status 1 when it finds errors.
 - **Pixel editor**: pencil, eraser, fill, colour picker, line, rectangle, ellipse, rectangular
   selection and move; brush size, X/Y mirroring, palette, layers with opacity, undo/redo,
   canvas resize and flip, pixel grid and tiling preview.
@@ -73,7 +79,7 @@ flattened image, and `.openpax` is left out of exported zips.
 1. **3D modelling, continued**: move/scale/rotate gizmos in the viewport, a visual UV editor,
    painting directly on the model, parent model resolution, display-transform previews.
 2. **Animation**: timeline, display-transform poser, keyframed rigs.
-3. **Pack tooling**: validation, blockstate / item definition / language / sound / font editors,
+3. **Pack tooling**: deeper validation, blockstate / item definition / language / sound / font editors,
    multi-version overlays.
 4. Bedrock Edition support.
 
@@ -157,11 +163,13 @@ rustflags = ["-Clinker-flavor=ld.lld", "-Clink-self-contained=yes", "-Clink-arg=
 
 | Crate | Purpose |
 | --- | --- |
-| `crates/openpax-core` | Pack model: `pack.mcmeta`, asset index, texture metadata, zip import/export. No UI. |
+| `crates/openpax-core` | Pack model: `pack.mcmeta`, asset index, texture metadata, validation, zip import/export. No UI. |
 | `crates/openpax-paint` | Pixel-art engine: bitmaps, layers, tools, undo history, PNG I/O. No UI. |
 | `crates/openpax-model` | Block/item model JSON, undoable model document, mesh generation, ray picking. No UI. |
 | `crates/openpax-render` | wgpu renderer for the 3D viewport: orbit camera, textured quads, line overlays. |
+| `crates/openpax-script` | Rhai scripting for the pixel editor and the command line. |
 | `crates/openpax-app` | The `openpax` desktop app (egui + wgpu). |
+| `crates/openpax-cli` | `openpax-cli`: pack checking and the pixel tools without the window. |
 
 The core, paint and model crates are headless on purpose, so editing logic can be unit tested
 without a window.

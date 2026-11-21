@@ -64,6 +64,8 @@ pub enum Dialog {
     OptimizePack,
     /// What optimizing every model would change, waiting for confirmation.
     OptimizeSummary(Box<crate::optimize::OptimizePlan>),
+    /// The problems found by "Check Pack for Problems".
+    Validation(Box<openpax_core::validate::Report>),
     /// A texture-editor dialog (scale, filters, export, scripts...).
     Pixel(Box<crate::pixel_dialogs::PixelDialog>),
 }
@@ -268,9 +270,10 @@ impl App {
         let mut done = false;
         let modal = egui::Modal::new(egui::Id::unique(("openpax_dialog", depth))).show(ctx, |ui| {
             ui.set_width(match dialog {
-                Dialog::Remix(_) | Dialog::Shortcuts(_) | Dialog::OptimizeSummary(_) => {
-                    WIDE_DIALOG_WIDTH
-                }
+                Dialog::Remix(_)
+                | Dialog::Shortcuts(_)
+                | Dialog::OptimizeSummary(_)
+                | Dialog::Validation(_) => WIDE_DIALOG_WIDTH,
                 Dialog::OptimizeModel(_) | Dialog::OptimizePack => DIALOG_WIDTH + 80.0,
                 Dialog::Pixel(ref d) if d.wide() => WIDE_DIALOG_WIDTH,
                 Dialog::Pixel(_) => DIALOG_WIDTH + 80.0,
@@ -313,6 +316,7 @@ impl App {
                 Dialog::OptimizeModel(state) => self.optimize_model_dialog(ui, state),
                 Dialog::OptimizePack => self.optimize_pack_dialog(ui),
                 Dialog::OptimizeSummary(plan) => self.optimize_summary_dialog(ui, plan),
+                Dialog::Validation(report) => self.validation_dialog(ui, report),
                 Dialog::Pixel(state) => self.pixel_dialog(ui, state),
             };
         });

@@ -675,6 +675,7 @@ impl App {
                 self.thumbs.clear();
                 self.info("Rescanned the pack folder");
             }
+            Command::ValidatePack => self.start_validate(ctx),
             Command::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
             Command::Undo => {
                 if let Some(editor) = self.active.and_then(|id| self.editors.get_mut(&id)) {
@@ -1056,6 +1057,7 @@ impl App {
                 ui.separator();
                 self.menu_item(ui, Command::ExportZip);
                 self.menu_item(ui, Command::Rescan);
+                self.menu_item(ui, Command::ValidatePack);
                 self.menu_item(ui, Command::OptimizePack);
                 ui.separator();
                 self.menu_item(ui, Command::Quit);

@@ -1,13 +1,15 @@
-//! `openpax-cli`: the pixel tools of OpenPax without the window.
+//! `openpax-cli`: the pack checker and pixel tools of OpenPax without the window.
 //!
-//! Every command reads PNG, GIF, APNG, WebP, BMP, TGA or JPEG files (and OpenPax layer
-//! sidecars via `--layers`), and exits with status 1 on failure (or, for `validate`, when
-//! problems are found).
+//! The image commands read PNG, GIF, APNG, WebP, BMP, TGA or JPEG files (and OpenPax layer
+//! sidecars via `--layers`). Every command exits with status 1 on failure (or, for `validate`
+//! and `validate-pack`, when problems are found).
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand, ValueEnum};
+use openpax_core::validate::{self as pack_check, Severity};
+use openpax_core::{Pack, Progress, vanilla};
 use openpax_paint::analysis::{self, CheckOptions};
 use openpax_paint::export::{self, AnimFrame, ExportPreset, SheetLayout, SheetOptions, Sprite};
 use openpax_paint::quantize::{self, Dither};
@@ -17,7 +19,7 @@ use openpax_paint::{Bitmap, Document, Palette, PaletteFormat, ScaleMethod};
 #[command(
     name = "openpax-cli",
     version,
-    about = "Convert, pack, scale, quantize, validate and script pixel art without the OpenPax window"
+    about = "Check resource packs, and convert, pack, scale, quantize, validate and script pixel art, without the OpenPax window"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -152,6 +154,27 @@ enum Cmd {
         max_colors: usize,
         #[arg(long)]
         no_strays: bool,
+        /// Print the problems as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Check a resource pack folder for broken JSON, missing models, textures and sounds,
+    /// names Minecraft will not load and broken animations. Exits with status 1 when errors
+    /// are found.
+    ValidatePack {
+        /// The pack folder (the one holding pack.mcmeta).
+        pack: PathBuf,
+        /// A folder with the game's default resources, to check `minecraft:` references
+        /// against. Without it, a default pack OpenPax has downloaded for the same pack format
+        /// is used if there is one; otherwise those references are assumed to exist.
+        #[arg(long)]
+        vanilla: Option<PathBuf>,
+        /// Never check `minecraft:` references.
+        #[arg(long, conflicts_with = "vanilla")]
+        no_vanilla: bool,
+        /// Exit with status 1 for warnings too.
+        #[arg(long)]
+        strict: bool,
         /// Print the problems as JSON.
         #[arg(long)]
         json: bool,
@@ -533,6 +556,74 @@ fn run(command: Cmd) -> Result<bool> {
             }
             Ok(clean)
         }
+        Cmd::ValidatePack {
+            pack,
+            vanilla,
+            no_vanilla,
+            strict,
+            json,
+        } => {
+            let pack = Pack::open(&pack).map_err(|e| e.to_string())?;
+            let vanilla = match (vanilla, no_vanilla) {
+                (Some(dir), _) if !dir.is_dir() => {
+                    return Err(format!("{}: not a folder", dir.display()));
+                }
+                (Some(dir), _) => Some(dir),
+                (None, true) => None,
+                (None, false) => pack
+                    .meta
+                    .format()
+                    .and_then(|f| vanilla::cached_for_format(&vanilla::cache_root(), f)),
+            };
+            let options = pack_check::Options { vanilla };
+            let report = pack_check::validate(&pack, &options, &mut Progress::none())
+                .map_err(|e| e.to_string())?;
+            if json {
+                let issues: Vec<serde_json::Value> = report
+                    .issues
+                    .iter()
+                    .map(|i| {
+                        serde_json::json!({
+                            "severity": i.severity.name(), "kind": i.code,
+                            "file": i.path, "message": i.message,
+                        })
+                    })
+                    .collect();
+                let out = serde_json::json!({
+                    "files_checked": report.files_checked,
+                    "vanilla_checked": report.vanilla_checked,
+                    "errors": report.errors(),
+                    "warnings": report.warnings(),
+                    "issues": issues,
+                });
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?
+                );
+            } else {
+                for issue in &report.issues {
+                    println!(
+                        "{}: {}: {} [{}]",
+                        issue.path,
+                        issue.severity.name(),
+                        issue.message,
+                        issue.code
+                    );
+                }
+                println!(
+                    "checked {} file(s): {} error(s), {} warning(s)",
+                    report.files_checked,
+                    report.errors(),
+                    report.warnings()
+                );
+                if !report.vanilla_checked {
+                    println!(
+                        "references to minecraft: files were not checked (pass --vanilla <folder>)"
+                    );
+                }
+            }
+            Ok(report.errors() == 0 && !(strict && report.count(Severity::Warning) > 0))
+        }
         Cmd::Script {
             script,
             inputs,
@@ -705,6 +796,44 @@ mod tests {
         let back = load_frames(&webp).unwrap();
         assert_eq!(back.len(), 3);
         assert_eq!(back[2].duration_ms, 120);
+    }
+
+    #[test]
+    fn validate_pack_fails_on_errors_and_on_warnings_when_strict() {
+        let dir = tempfile::tempdir().unwrap();
+        let pack = Pack::create(dir.path().join("demo"), "Demo", 46).unwrap();
+        let check = |strict: bool, json: bool| {
+            run(Cmd::ValidatePack {
+                pack: pack.root().to_owned(),
+                vanilla: None,
+                no_vanilla: true,
+                strict,
+                json,
+            })
+        };
+        assert!(check(true, false).unwrap());
+
+        // A warning: fine unless --strict.
+        pack.write("assets/gems/lang/en_us.json", br#"{"a":1}"#)
+            .unwrap();
+        assert!(check(false, true).unwrap());
+        assert!(!check(true, false).unwrap());
+
+        // An error.
+        pack.write("assets/gems/models/item/ruby.json", b"{")
+            .unwrap();
+        assert!(!check(false, false).unwrap());
+
+        assert!(
+            run(Cmd::ValidatePack {
+                pack: dir.path().join("missing"),
+                vanilla: None,
+                no_vanilla: true,
+                strict: false,
+                json: false,
+            })
+            .is_err()
+        );
     }
 
     #[test]

@@ -13,6 +13,7 @@ mod progress;
 pub mod remix;
 mod resource_location;
 mod texture_meta;
+pub mod validate;
 pub mod vanilla;
 
 pub use archive::{export_zip, import_zip};

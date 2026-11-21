@@ -33,6 +33,7 @@ mod toasts;
 mod tool_options;
 mod tour;
 mod user_files;
+mod validate_ui;
 mod widgets;
 
 use eframe::egui;

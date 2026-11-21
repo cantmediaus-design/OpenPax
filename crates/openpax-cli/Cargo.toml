@@ -1,6 +1,6 @@
 [package]
 name = "openpax-cli"
-description = "Headless OpenPax: convert, pack, scale, quantize, validate and script images"
+description = "Headless OpenPax: check resource packs, and convert, pack, scale, quantize, validate and script images"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,6 +11,7 @@ name = "openpax-cli"
 path = "src/main.rs"
 
 [dependencies]
+openpax-core.workspace = true
 openpax-paint.workspace = true
 openpax-script.workspace = true
 clap.workspace = true

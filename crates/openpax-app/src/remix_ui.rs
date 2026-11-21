@@ -35,6 +35,8 @@ pub enum JobResult {
     PackCreated(PathBuf),
     /// What optimizing every model would change.
     OptimizePlan(Box<crate::optimize::OptimizePlan>),
+    /// The problems found by checking the pack.
+    Validation(Box<openpax_core::validate::Report>),
 }
 
 fn has_content(dir: &std::path::Path) -> bool {
@@ -280,6 +282,9 @@ impl App {
             }
             Outcome::Done(JobResult::OptimizePlan(plan)) => {
                 self.open_dialog(Dialog::OptimizeSummary(plan));
+            }
+            Outcome::Done(JobResult::Validation(report)) => {
+                self.open_dialog(Dialog::Validation(report));
             }
             Outcome::Cancelled => self.info("Cancelled"),
             Outcome::Failed(e) => self.error(e),

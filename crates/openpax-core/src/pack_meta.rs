@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 /// Packs at or above this format declare `min_format` / `max_format` instead of `pack_format`.
-const FIRST_RANGE_FORMAT: u32 = 65;
+pub(crate) const FIRST_RANGE_FORMAT: u32 = 65;
 
 /// Contents of `pack.mcmeta`. Unknown keys are preserved on round-trip.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

@@ -27,6 +27,7 @@ pub enum Command {
     CloseTab,
     ExportZip,
     Rescan,
+    ValidatePack,
     RenameAsset,
     DuplicateAsset,
     DeleteAsset,
@@ -123,7 +124,7 @@ const fn cmd_shift(logical_key: Key) -> KeyboardShortcut {
 }
 
 impl Command {
-    const FIXED: [Self; 49] = [
+    const FIXED: [Self; 50] = [
         Self::NewPack,
         Self::OpenPack,
         Self::ImportZip,
@@ -136,6 +137,7 @@ impl Command {
         Self::CloseTab,
         Self::ExportZip,
         Self::Rescan,
+        Self::ValidatePack,
         Self::RenameAsset,
         Self::DuplicateAsset,
         Self::DeleteAsset,
@@ -196,6 +198,7 @@ impl Command {
             Self::CloseTab => "Close Tab",
             Self::ExportZip => "Export Zip…",
             Self::Rescan => "Rescan Pack Folder",
+            Self::ValidatePack => "Check Pack for Problems",
             Self::RenameAsset => "Rename or Move File…",
             Self::DuplicateAsset => "Duplicate File",
             Self::DeleteAsset => "Delete File…",
@@ -251,6 +254,7 @@ impl Command {
             Self::CloseTab => icons::CLOSE,
             Self::ExportZip => icons::EXPORT,
             Self::Rescan => icons::REFRESH,
+            Self::ValidatePack => icons::BUG,
             Self::RenameAsset => icons::RENAME,
             Self::DuplicateAsset => icons::COPY,
             Self::DeleteAsset => icons::TRASH,
@@ -385,6 +389,7 @@ impl Command {
             | Self::LoadDefaultPack
             | Self::Remix
             | Self::NewModel
+            | Self::ValidatePack
             | Self::Quit
             | Self::FlipHorizontal
             | Self::FlipVertical
@@ -416,6 +421,7 @@ impl Command {
             | Self::CloseTab
             | Self::ExportZip
             | Self::Rescan
+            | Self::ValidatePack
             | Self::RenameAsset
             | Self::DuplicateAsset
             | Self::DeleteAsset
@@ -488,6 +494,7 @@ impl Command {
             | Self::SaveAll
             | Self::ExportZip
             | Self::Rescan
+            | Self::ValidatePack
             | Self::RestoreDeleted
             | Self::StartTour
             | Self::OptimizePack
