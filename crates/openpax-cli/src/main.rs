@@ -69,7 +69,7 @@ enum Cmd {
     /// Print size, frame count and colour count of images.
     Info { inputs: Vec<PathBuf> },
     /// Convert between formats; the output extension picks the format (.png, .gif,
-    /// .apng, .webp). Animated inputs keep their frames.
+    /// .apng, .webp). Animated inputs keep their frames (WebP and GIF stay animated).
     Convert {
         input: PathBuf,
         output: PathBuf,
@@ -131,6 +131,10 @@ enum Cmd {
         palette: Option<PathBuf>,
         #[arg(long, value_enum, default_value_t = DitherArg::None)]
         dither: DitherArg,
+        /// Ordered dithering with a pattern: a built-in name (checker, dots, bricks...) or a
+        /// PNG tile whose brightness levels become the thresholds.
+        #[arg(long)]
+        pattern: Option<String>,
     },
     /// Convert a palette between formats, or extract one from an image.
     Palette { input: PathBuf, output: PathBuf },
@@ -212,6 +216,29 @@ fn load_palette(path: &Path) -> Result<Palette> {
     Palette::decode(&read(path)?, format)
 }
 
+/// A dither pattern: a built-in one by name (case and spaces ignored) or a PNG file.
+fn load_pattern(name: &str) -> Result<Bitmap> {
+    let key = |s: &str| s.to_lowercase().replace([' ', '-', '_'], "");
+    if let Some((_, tile)) = quantize::builtin_patterns()
+        .into_iter()
+        .find(|(n, _)| key(n) == key(name))
+    {
+        return Ok(tile);
+    }
+    let path = Path::new(name);
+    if path.exists() {
+        return openpax_paint::decode_image(&read(path)?).map_err(|e| format!("{name}: {e}"));
+    }
+    let names: Vec<String> = quantize::builtin_patterns()
+        .iter()
+        .map(|(n, _)| key(n))
+        .collect();
+    Err(format!(
+        "unknown pattern {name}; use a PNG file or one of: {}",
+        names.join(", ")
+    ))
+}
+
 fn stem(path: &Path) -> String {
     path.file_stem()
         .map(|s| s.to_string_lossy().into_owned())
@@ -230,7 +257,7 @@ fn save_frames(frames: &[AnimFrame], output: &Path) -> Result<()> {
         "apng" => export::encode_apng(frames, None),
         "png" if frames.len() > 1 => export::encode_apng(frames, None),
         "png" => openpax_paint::encode_png(&first.image),
-        "webp" => export::encode_webp(&first.image),
+        "webp" => export::encode_animated_webp(frames, None),
         other => {
             return Err(format!(
                 "cannot write .{other} files (use png, apng, gif or webp)"
@@ -403,7 +430,9 @@ fn run(command: Cmd) -> Result<bool> {
             colors,
             palette,
             dither,
+            pattern,
         } => {
+            let tile = pattern.as_deref().map(load_pattern).transpose()?;
             let frames = load_frames(&input)?;
             let target: Vec<openpax_paint::Rgba> = match &palette {
                 Some(p) => load_palette(p)?.colors,
@@ -422,7 +451,10 @@ fn run(command: Cmd) -> Result<bool> {
             let out: Vec<AnimFrame> = frames
                 .iter()
                 .map(|f| AnimFrame {
-                    image: quantize::remap(&f.image, &target, dither.into()),
+                    image: match &tile {
+                        Some(tile) => quantize::remap_pattern(&f.image, &target, tile),
+                        None => quantize::remap(&f.image, &target, dither.into()),
+                    },
                     duration_ms: f.duration_ms,
                 })
                 .collect();
@@ -623,6 +655,56 @@ mod tests {
             })
             .unwrap()
         );
+    }
+
+    #[test]
+    fn pattern_dithering_and_animated_webp() {
+        let dir = tempfile::tempdir().unwrap();
+        let grey = dir.path().join("grey.png");
+        std::fs::write(
+            &grey,
+            openpax_paint::encode_png(&Bitmap::filled(4, 4, [128, 128, 128, 255])).unwrap(),
+        )
+        .unwrap();
+        let palette = dir.path().join("bw.hex");
+        std::fs::write(&palette, "000000\nffffff\n").unwrap();
+        let out = dir.path().join("out.png");
+        assert!(
+            run(Cmd::Quantize {
+                input: grey,
+                output: out.clone(),
+                colors: 2,
+                palette: Some(palette),
+                dither: DitherArg::None,
+                pattern: Some("Checker".into()),
+            })
+            .unwrap()
+        );
+        let img = openpax_paint::decode_png(&std::fs::read(&out).unwrap()).unwrap();
+        assert_ne!(img.get(0, 0), img.get(1, 0));
+        assert!(load_pattern("no such pattern").is_err());
+
+        let frames: Vec<AnimFrame> = (0..3)
+            .map(|i| AnimFrame {
+                image: Bitmap::filled(2, 2, [i * 80, 0, 0, 255]),
+                duration_ms: 120,
+            })
+            .collect();
+        let gif = dir.path().join("a.gif");
+        std::fs::write(&gif, export::encode_gif(&frames, None).unwrap()).unwrap();
+        let webp = dir.path().join("a.webp");
+        assert!(
+            run(Cmd::Convert {
+                input: gif,
+                output: webp.clone(),
+                scale: 1,
+                sequence: false
+            })
+            .unwrap()
+        );
+        let back = load_frames(&webp).unwrap();
+        assert_eq!(back.len(), 3);
+        assert_eq!(back[2].duration_ms, 120);
     }
 
     #[test]

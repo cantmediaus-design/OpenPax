@@ -120,6 +120,85 @@ pub fn encode_webp(image: &Bitmap) -> Result<Vec<u8>, Error> {
     Ok(out)
 }
 
+/// Appends a RIFF chunk (padded to an even length).
+fn push_chunk(out: &mut Vec<u8>, fourcc: &[u8; 4], body: &[u8]) {
+    out.extend_from_slice(fourcc);
+    out.extend_from_slice(&(body.len() as u32).to_le_bytes());
+    out.extend_from_slice(body);
+    if body.len() % 2 == 1 {
+        out.push(0);
+    }
+}
+
+fn push_u24(out: &mut Vec<u8>, v: u32) {
+    out.extend_from_slice(&v.to_le_bytes()[..3]);
+}
+
+/// The `VP8L` chunk (header, size and data) of a lossless WebP file made by [`encode_webp`].
+fn vp8l_chunk(webp: &[u8]) -> Result<&[u8], Error> {
+    let mut pos = 12; // "RIFF" size "WEBP"
+    while pos + 8 <= webp.len() {
+        let size = u32::from_le_bytes([webp[pos + 4], webp[pos + 5], webp[pos + 6], webp[pos + 7]])
+            as usize;
+        let end = (pos + 8 + size + size % 2).min(webp.len());
+        if &webp[pos..pos + 4] == b"VP8L" {
+            return Ok(&webp[pos..end]);
+        }
+        pos = end;
+    }
+    Err(Error::Other(
+        "the WebP encoder wrote no lossless image data".into(),
+    ))
+}
+
+/// A lossless animated WebP. `loops` of `None` repeats forever. One frame gives a still image.
+pub fn encode_animated_webp(frames: &[AnimFrame], loops: Option<u16>) -> Result<Vec<u8>, Error> {
+    let first = frames
+        .first()
+        .ok_or_else(|| Error::Other("no frames".into()))?;
+    if frames.len() == 1 {
+        return encode_webp(&first.image);
+    }
+    let (w, h) = (first.image.width(), first.image.height());
+    if w == 0 || h == 0 || w > 1 << 24 || h > 1 << 24 {
+        return Err(Error::Other("the image is too large for WebP".into()));
+    }
+    let mut body = Vec::new();
+    body.extend_from_slice(b"WEBP");
+    // VP8X: animation and alpha flags, canvas size.
+    let mut vp8x = vec![0x02 | 0x10, 0, 0, 0];
+    push_u24(&mut vp8x, w - 1);
+    push_u24(&mut vp8x, h - 1);
+    push_chunk(&mut body, b"VP8X", &vp8x);
+    // ANIM: transparent background, loop count (0 = forever).
+    let mut anim = vec![0, 0, 0, 0];
+    anim.extend_from_slice(&loops.unwrap_or(0).to_le_bytes());
+    push_chunk(&mut body, b"ANIM", &anim);
+    for f in frames {
+        let image = if (f.image.width(), f.image.height()) == (w, h) {
+            f.image.clone()
+        } else {
+            f.image.resized(w, h)
+        };
+        let still = encode_webp(&image)?;
+        let data = vp8l_chunk(&still)?;
+        let mut anmf = Vec::with_capacity(16 + data.len());
+        push_u24(&mut anmf, 0); // x / 2
+        push_u24(&mut anmf, 0); // y / 2
+        push_u24(&mut anmf, w - 1);
+        push_u24(&mut anmf, h - 1);
+        push_u24(&mut anmf, f.duration_ms.min((1 << 24) - 1));
+        anmf.push(0x02); // replace the canvas (no blending), no disposal
+        anmf.extend_from_slice(data);
+        push_chunk(&mut body, b"ANMF", &anmf);
+    }
+    let mut out = Vec::with_capacity(body.len() + 8);
+    out.extend_from_slice(b"RIFF");
+    out.extend_from_slice(&(body.len() as u32).to_le_bytes());
+    out.extend_from_slice(&body);
+    Ok(out)
+}
+
 /// Reads every frame of a GIF, APNG or animated WebP (a still image gives one frame).
 pub fn decode_animation(bytes: &[u8]) -> Result<Vec<AnimFrame>, Error> {
     let collect = |frames: image::Frames| -> Result<Vec<AnimFrame>, Error> {
@@ -697,7 +776,7 @@ impl ExportFormat {
             Self::PngSequence => "PNG sequence (one file per frame)",
             Self::Gif => "Animated GIF",
             Self::Apng => "Animated PNG",
-            Self::WebP => "WebP image",
+            Self::WebP => "WebP (animated when there are frames)",
             Self::SpriteSheet => "Sprite sheet (PNG + JSON)",
         }
     }
@@ -747,8 +826,11 @@ pub fn export(
         ExportFormat::Gif => out.push((format!("{base}.{ext}"), encode_gif(&frames, None)?)),
         ExportFormat::Apng => out.push((format!("{base}.{ext}"), encode_apng(&frames, None)?)),
         ExportFormat::WebP => {
-            if let Some(f) = frames.first() {
-                out.push((format!("{base}.{ext}"), encode_webp(&f.image)?));
+            if !frames.is_empty() {
+                out.push((
+                    format!("{base}.{ext}"),
+                    encode_animated_webp(&frames, None)?,
+                ));
             }
         }
         ExportFormat::SpriteSheet => {
@@ -816,6 +898,18 @@ mod tests {
         let f = &frames()[1];
         let back = decode_animation(&encode_webp(&f.image).unwrap()).unwrap();
         assert_eq!(back[0].image, f.image);
+    }
+
+    #[test]
+    fn animated_webp_round_trip_is_exact() {
+        let bytes = encode_animated_webp(&frames(), None).unwrap();
+        assert_eq!(&bytes[0..4], b"RIFF");
+        assert_eq!(
+            u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize,
+            bytes.len() - 8
+        );
+        let back = decode_animation(&bytes).unwrap();
+        assert_eq!(back, frames());
     }
 
     #[test]

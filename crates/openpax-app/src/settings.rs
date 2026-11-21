@@ -141,6 +141,7 @@ impl Settings {
             view: self.pixel_view.clone().unwrap_or_default(),
             brushes: Vec::new(),
             tile: Default::default(),
+            patterns: Vec::new(),
         }
     }
 }

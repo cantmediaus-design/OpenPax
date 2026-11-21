@@ -53,12 +53,17 @@ pub enum PixelDialog {
         colors: usize,
         use_palette: bool,
         dither: Dither,
+        /// A dither pattern by name, instead of dither.
+        pattern: Option<String>,
         scope: Scope,
     },
     SaveSelection {
         name: String,
     },
     SaveBrush {
+        name: String,
+    },
+    SavePattern {
         name: String,
     },
     NewTilemap {
@@ -584,6 +589,7 @@ impl App {
                 colors,
                 use_palette,
                 dither,
+                pattern,
                 scope,
             } => {
                 header(ui, icons::PALETTE, "Reduce Colours");
@@ -607,17 +613,44 @@ impl App {
                         ui.end_row();
                     }
                     ui.label("Dithering");
+                    let selected = match pattern {
+                        Some(name) => format!("Pattern: {name}"),
+                        None => dither.name().to_owned(),
+                    };
                     egui::ComboBox::from_id_salt("dither")
-                        .selected_text(dither.name())
+                        .selected_text(selected)
                         .show_ui(ui, |ui| {
                             for d in Dither::ALL {
-                                ui.selectable_value(dither, d, d.name());
+                                if ui
+                                    .selectable_label(pattern.is_none() && *dither == d, d.name())
+                                    .clicked()
+                                {
+                                    *dither = d;
+                                    *pattern = None;
+                                }
+                            }
+                            ui.separator();
+                            for p in &self.tools.patterns {
+                                let on = pattern.as_deref() == Some(p.name.as_str());
+                                if ui
+                                    .selectable_label(on, format!("Pattern: {}", p.name))
+                                    .clicked()
+                                {
+                                    *pattern = Some(p.name.clone());
+                                }
                             }
                         });
                     ui.end_row();
                     scope_ui(ui, scope);
                 });
+                if pattern.is_some() {
+                    ui.weak("The pattern's brightness levels are used as the dither thresholds.");
+                }
                 let (confirm, cancel) = footer(ui, "Reduce", true);
+                let tile = pattern
+                    .as_ref()
+                    .and_then(|n| self.tools.patterns.iter().find(|p| &p.name == n))
+                    .map(|p| p.image.clone());
                 if confirm && let Some(e) = texture_mut(&mut self.editors, self.active) {
                     let palette: Vec<Rgba> = if *use_palette {
                         self.tools.palette.colors.clone()
@@ -625,9 +658,34 @@ impl App {
                         openpax_paint::quantize::median_cut(&e.doc.flatten(), *colors)
                     };
                     let d = *dither;
-                    e.doc.apply_filter("Reduce colours", *scope, |b| {
-                        openpax_paint::quantize::remap(b, &palette, d)
-                    });
+                    e.doc
+                        .apply_filter("Reduce colours", *scope, |b| match &tile {
+                            Some(tile) => openpax_paint::quantize::remap_pattern(b, &palette, tile),
+                            None => openpax_paint::quantize::remap(b, &palette, d),
+                        });
+                }
+                confirm || cancel
+            }
+            PixelDialog::SavePattern { name } => {
+                header(ui, icons::DITHER, "Save Dither Pattern");
+                form(ui, "save_pattern", |ui| {
+                    crate::dialogs::text_row(ui, "Name", name, true)
+                });
+                ui.weak(
+                    "The selected pixels become a pattern tile: opaque pixels get the dither \
+                     brush's second colour, and their brightness sets the order when reducing \
+                     colours.",
+                );
+                let (confirm, cancel) = footer(ui, "Save", !name.trim().is_empty());
+                if confirm && let Some(e) = texture_mut(&mut self.editors, self.active) {
+                    let image = e.doc.copy_selected();
+                    match self.tools.save_pattern(name.trim(), image) {
+                        Ok(()) => {
+                            let saved = self.tools.patterns.last().map(|p| p.name.clone());
+                            self.tools.select_pattern(saved.as_deref());
+                        }
+                        Err(err) => self.error(format!("Could not save the pattern:\n{err}")),
+                    }
                 }
                 confirm || cancel
             }

@@ -191,6 +191,7 @@ impl App {
             preview_open: false,
         };
         app.tools.load_brushes();
+        app.tools.load_patterns();
         // Open the pack given on the command line, else the last one if it is still there.
         if let Some(root) = initial_pack {
             app.open_pack(root);

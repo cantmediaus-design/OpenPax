@@ -277,6 +277,37 @@ fn dither_brush_checkers() {
 }
 
 #[test]
+fn dither_brush_and_fill_use_custom_patterns() {
+    let lines = crate::quantize::builtin_patterns()
+        .into_iter()
+        .find(|(n, _)| *n == "Horizontal lines")
+        .unwrap()
+        .1;
+    let mut doc = Document::new(4, 4);
+    let s = ToolSettings {
+        size: 4,
+        dither_color: BLUE,
+        dither_pattern: Some(std::sync::Arc::new(lines.clone())),
+        ..settings(RED)
+    };
+    click(&mut doc, ToolKind::Dither, s, (2, 2));
+    assert_eq!(doc.flatten().get(1, 0), Some(BLUE));
+    assert_eq!(doc.flatten().get(1, 1), Some(RED));
+
+    let mut doc = Document::new(2, 2);
+    doc.fill_selected(RED);
+    doc.fill_pattern(BLUE, TRANSPARENT, &lines);
+    assert_eq!(doc.flatten().get(0, 0), Some(BLUE));
+    assert_eq!(
+        doc.flatten().get(0, 1),
+        Some(RED),
+        "a transparent second colour keeps pixels"
+    );
+    assert!(doc.undo());
+    assert_eq!(doc.flatten().get(0, 0), Some(RED));
+}
+
+#[test]
 fn selection_clips_painting() {
     let mut doc = Document::new(4, 4);
     drag(&mut doc, ToolKind::Select, settings(RED), (1, 1), (2, 2));

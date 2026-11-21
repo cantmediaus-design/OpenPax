@@ -180,6 +180,15 @@ pub struct CustomBrush {
     pub image: Arc<Bitmap>,
 }
 
+/// A dither pattern: a small tile whose opaque pixels are "on".
+#[derive(Clone, Debug, PartialEq)]
+pub struct Pattern {
+    pub name: String,
+    pub image: Arc<Bitmap>,
+    /// Comes with OpenPax (cannot be deleted).
+    pub builtin: bool,
+}
+
 /// What the tile stamp places.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct TileBrush {
@@ -203,6 +212,8 @@ pub struct ToolState {
     pub view: ViewPrefs,
     pub brushes: Vec<CustomBrush>,
     pub tile: TileBrush,
+    /// Dither patterns: the built-in ones, then the user's own.
+    pub patterns: Vec<Pattern>,
 }
 
 impl Default for ToolState {
@@ -216,6 +227,7 @@ impl Default for ToolState {
             view: ViewPrefs::default(),
             brushes: Vec::new(),
             tile: TileBrush::default(),
+            patterns: builtin_patterns(),
         }
     }
 }
@@ -287,11 +299,103 @@ impl ToolState {
         Ok(())
     }
 
+    /// Loads the built-in dither patterns and the user's saved ones, and finds the pattern
+    /// the dither brush was using.
+    pub fn load_patterns(&mut self) {
+        let mut patterns = builtin_patterns();
+        let dir = crate::user_files::dir("patterns");
+        let mut own = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for path in entries.flatten().map(|e| e.path()) {
+                if path
+                    .extension()
+                    .is_some_and(|e| e.eq_ignore_ascii_case("png"))
+                    && let Ok(bytes) = std::fs::read(&path)
+                    && let Ok(image) = openpax_paint::decode_png(&bytes)
+                {
+                    let name = path
+                        .file_stem()
+                        .map(|s| s.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    own.push(Pattern {
+                        name,
+                        image: Arc::new(image),
+                        builtin: false,
+                    });
+                }
+            }
+        }
+        own.sort_by(|a, b| a.name.cmp(&b.name));
+        patterns.extend(own);
+        self.patterns = patterns;
+        let wanted = self.settings.dither_pattern_name.clone();
+        self.settings.dither_pattern = wanted
+            .and_then(|n| self.patterns.iter().find(|p| p.name == n))
+            .map(|p| p.image.clone());
+    }
+
+    /// Saves a pattern tile to the patterns folder and adds it to the list.
+    pub fn save_pattern(&mut self, name: &str, image: Bitmap) -> Result<(), String> {
+        let safe: String = name
+            .chars()
+            .map(|c| {
+                if c.is_alphanumeric() || c == ' ' || c == '-' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        if self.patterns.iter().any(|p| p.builtin && p.name == safe) {
+            return Err(format!("{safe} is the name of a built-in pattern"));
+        }
+        let png = openpax_paint::encode_png(&image).map_err(|e| e.to_string())?;
+        std::fs::write(
+            crate::user_files::dir("patterns").join(format!("{safe}.png")),
+            png,
+        )
+        .map_err(|e| e.to_string())?;
+        self.patterns.retain(|p| p.name != safe);
+        self.patterns.push(Pattern {
+            name: safe,
+            image: Arc::new(image),
+            builtin: false,
+        });
+        Ok(())
+    }
+
+    pub fn delete_pattern(&mut self, name: &str) {
+        let _ =
+            std::fs::remove_file(crate::user_files::dir("patterns").join(format!("{name}.png")));
+        self.patterns.retain(|p| p.builtin || p.name != name);
+        if self.settings.dither_pattern_name.as_deref() == Some(name) {
+            self.select_pattern(None);
+        }
+    }
+
+    /// Makes the dither brush use a pattern (`None`: the Bayer matrix and density).
+    pub fn select_pattern(&mut self, name: Option<&str>) {
+        let pattern = name.and_then(|n| self.patterns.iter().find(|p| p.name == n));
+        self.settings.dither_pattern = pattern.map(|p| p.image.clone());
+        self.settings.dither_pattern_name = pattern.map(|p| p.name.clone());
+    }
+
     pub fn delete_brush(&mut self, name: &str) {
         let path = crate::user_files::dir("brushes").join(format!("{name}.png"));
         let _ = std::fs::remove_file(path);
         self.brushes.retain(|b| b.name != name);
     }
+}
+
+fn builtin_patterns() -> Vec<Pattern> {
+    openpax_paint::quantize::builtin_patterns()
+        .into_iter()
+        .map(|(name, image)| Pattern {
+            name: name.to_owned(),
+            image: Arc::new(image),
+            builtin: true,
+        })
+        .collect()
 }
 
 /// Splits a Minecraft animation strip into frames (or keeps a still image as one frame).

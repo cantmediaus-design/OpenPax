@@ -168,8 +168,34 @@ fn tool_settings(ui: &mut egui::Ui, editor: &mut TextureEditor, tools: &mut Tool
             }
         }
         ToolKind::Dither => {
-            ui.label("Density");
-            ui.add(egui::Slider::new(&mut s.dither_level, 0..=16));
+            let mut chosen: Option<Option<String>> = None;
+            egui::ComboBox::from_id_salt("dither_pattern")
+                .width(120.0)
+                .selected_text(s.dither_pattern_name.clone().unwrap_or_else(|| "Ordered (density)".into()))
+                .show_ui(ui, |ui| {
+                    if ui.selectable_label(s.dither_pattern.is_none(), "Ordered (density)").clicked() {
+                        chosen = Some(None);
+                    }
+                    for p in &tools.patterns {
+                        let selected = s.dither_pattern_name.as_deref() == Some(p.name.as_str());
+                        if ui.selectable_label(selected, &p.name).clicked() {
+                            chosen = Some(Some(p.name.clone()));
+                        }
+                    }
+                })
+                .response
+                .on_hover_text("The pattern's opaque pixels get the second colour. Save your own in the Brushes section.");
+            if let Some(name) = chosen {
+                s.dither_pattern = name
+                    .as_ref()
+                    .and_then(|n| tools.patterns.iter().find(|p| &p.name == n))
+                    .map(|p| p.image.clone());
+                s.dither_pattern_name = name;
+            }
+            if s.dither_pattern.is_none() {
+                ui.label("Density");
+                ui.add(egui::Slider::new(&mut s.dither_level, 0..=16));
+            }
             let [r, g, b, a] = s.dither_color;
             let mut c = egui::Color32::from_rgba_unmultiplied(r, g, b, a);
             if ui

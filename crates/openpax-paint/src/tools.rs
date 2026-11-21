@@ -175,6 +175,11 @@ pub struct ToolSettings {
     pub dither_color: Rgba,
     /// Dither density, 0 (all primary) to 16 (all `dither_color`).
     pub dither_level: u8,
+    /// A tile whose opaque pixels take `dither_color` (instead of the Bayer matrix).
+    #[serde(skip)]
+    pub dither_pattern: Option<Arc<Bitmap>>,
+    /// Name of the chosen pattern, so it can be found again after a restart.
+    pub dither_pattern_name: Option<String>,
     /// Strokes wrap around the canvas edges (seamless tiles).
     pub wrap: bool,
     /// Pen pressure of the current stroke, 0..=1 (1 without a pen).
@@ -211,6 +216,8 @@ impl Default for ToolSettings {
             ramp: Vec::new(),
             dither_color: [255, 255, 255, 255],
             dither_level: 8,
+            dither_pattern: None,
+            dither_pattern_name: None,
             wrap: false,
             pressure: 1.0,
             pressure_size: false,
@@ -340,8 +347,14 @@ impl Painter<'_> {
                 ramp[j]
             }
             PaintMode::Dither => {
-                let level = BAYER4[y.rem_euclid(4) as usize][x.rem_euclid(4) as usize];
-                if level < self.settings.dither_level {
+                let on = match &self.settings.dither_pattern {
+                    Some(pattern) => crate::quantize::pattern_on(pattern, x, y),
+                    None => {
+                        BAYER4[y.rem_euclid(4) as usize][x.rem_euclid(4) as usize]
+                            < self.settings.dither_level
+                    }
+                };
+                if on {
                     self.settings.dither_color
                 } else {
                     self.color

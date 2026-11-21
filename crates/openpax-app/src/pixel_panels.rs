@@ -41,6 +41,9 @@ impl App {
             self.animation_section(ui)
         });
         widgets::section(ui, icons::BRUSH, "Brushes", |ui| self.brushes_section(ui));
+        widgets::section(ui, icons::DITHER, "Dither Patterns", |ui| {
+            self.patterns_section(ui);
+        });
         widgets::section(ui, icons::STAMP, "Tiles", |ui| self.tiles_section(ui));
         widgets::section(ui, icons::CROSSHAIR, "Origin and Guides", |ui| {
             self.origin_section(ui)
@@ -1996,4 +1999,127 @@ pub fn view_settings_ui(ui: &mut egui::Ui, view: &mut ViewPrefs) {
         }
     });
     ui.checkbox(&mut view.integer_zoom, "Whole-step zoom only");
+}
+
+impl App {
+    /// Dither patterns: pick one for the dither brush, fill the selection with it, save the
+    /// selection as a new one.
+    fn patterns_section(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        let mut chosen: Option<Option<String>> = None;
+        let mut delete = None;
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = vec2(3.0, 3.0);
+            let ordered = self.tools.settings.dither_pattern.is_none();
+            if ui
+                .selectable_label(ordered, "Ordered")
+                .on_hover_text("The Bayer matrix, with an adjustable density")
+                .clicked()
+            {
+                chosen = Some(None);
+            }
+            for p in &self.tools.patterns {
+                // A preview of the tile repeated over 4 × 4 tiles.
+                let id =
+                    egui::Id::unique(("pattern_tex", &p.name, p.image.width(), p.image.height()));
+                let texture: TextureHandle =
+                    ctx.data_mut(|d| d.get_temp(id)).unwrap_or_else(|| {
+                        let mut preview = openpax_paint::Bitmap::new(16, 16);
+                        preview.map_pixels(|x, y, _| {
+                            if openpax_paint::quantize::pattern_on(&p.image, x, y) {
+                                [30, 30, 30, 255]
+                            } else {
+                                [225, 225, 225, 255]
+                            }
+                        });
+                        let t = ctx.load_texture(
+                            format!("pattern:{}", p.name),
+                            crate::texture_editor::color_image(&preview),
+                            egui::TextureOptions::NEAREST,
+                        );
+                        ctx.data_mut(|d| d.insert_temp(id, t.clone()));
+                        t
+                    });
+                let selected = self.tools.settings.dither_pattern_name.as_deref()
+                    == Some(p.name.as_str())
+                    && !ordered;
+                let response = ui
+                    .add(
+                        egui::Button::image(egui::Image::from_texture((
+                            texture.id(),
+                            vec2(24.0, 24.0),
+                        )))
+                        .selected(selected),
+                    )
+                    .on_hover_text(format!(
+                        "{} ({}×{})",
+                        p.name,
+                        p.image.width(),
+                        p.image.height()
+                    ));
+                if response.clicked() {
+                    chosen = Some(Some(p.name.clone()));
+                }
+                if !p.builtin {
+                    response.context_menu(|ui| {
+                        if ui
+                            .button(widgets::icon_label(icons::TRASH, "Delete pattern"))
+                            .clicked()
+                        {
+                            delete = Some(p.name.clone());
+                            ui.close();
+                        }
+                    });
+                }
+            }
+        });
+        if let Some(name) = chosen {
+            self.tools.select_pattern(name.as_deref());
+            self.tools.tool = openpax_paint::ToolKind::Dither;
+        }
+        if let Some(name) = delete {
+            self.tools.delete_pattern(&name);
+        }
+        let pattern = self.tools.settings.dither_pattern.clone();
+        let (primary, secondary) = (self.tools.settings.color, self.tools.secondary);
+        let has_texture = texture_mut(&mut self.editors, self.active).is_some();
+        ui.horizontal_wrapped(|ui| {
+            if ui
+                .add_enabled(
+                    has_texture && pattern.is_some(),
+                    egui::Button::new("Fill selection"),
+                )
+                .on_hover_text("Primary colour where the pattern is on, secondary elsewhere")
+                .on_disabled_hover_text("Pick a pattern first")
+                .clicked()
+                && let (Some(e), Some(p)) = (texture_mut(&mut self.editors, self.active), &pattern)
+            {
+                e.doc.fill_pattern(primary, secondary, p);
+            }
+            if ui
+                .add_enabled(
+                    has_texture && pattern.is_some(),
+                    egui::Button::new("Overlay"),
+                )
+                .on_hover_text("Primary colour where the pattern is on; other pixels stay")
+                .clicked()
+                && let (Some(e), Some(p)) = (texture_mut(&mut self.editors, self.active), &pattern)
+            {
+                e.doc.fill_pattern(primary, [0, 0, 0, 0], p);
+            }
+            if ui
+                .add_enabled(has_texture, egui::Button::new("Save selection as pattern…"))
+                .clicked()
+            {
+                let n = self.tools.patterns.iter().filter(|p| !p.builtin).count() + 1;
+                self.open_pixel_dialog(PixelDialog::SavePattern {
+                    name: format!("Pattern {n}"),
+                });
+            }
+            if ui.button("Folder").clicked() {
+                crate::user_files::reveal(&crate::user_files::dir("patterns"));
+            }
+        });
+        ui.weak("Patterns tile across the image. Draw one small tile, select it and save it.");
+    }
 }

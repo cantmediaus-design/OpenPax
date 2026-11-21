@@ -1671,6 +1671,25 @@ impl Document {
         });
     }
 
+    /// Fills the selection (or the layer) with a two-colour pattern: the pattern's opaque
+    /// pixels take `on`, the rest `off` (a transparent `off` leaves those pixels alone).
+    pub fn fill_pattern(&mut self, on: Rgba, off: Rgba, pattern: &Bitmap) {
+        if self.edit_blocker().is_some() {
+            return;
+        }
+        self.paint_cels("Pattern fill", Scope::Cel, |cel, base, _| {
+            cel.map_pixels(|x, y, _| {
+                if crate::quantize::pattern_on(pattern, x, y) {
+                    on
+                } else if off[3] == 0 {
+                    base.get(x, y).unwrap_or(TRANSPARENT)
+                } else {
+                    off
+                }
+            });
+        });
+    }
+
     // ---- floating pixels ----
 
     /// Lifts the selected pixels (or the whole layer) off the active cel.

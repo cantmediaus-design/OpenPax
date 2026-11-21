@@ -304,6 +304,7 @@ impl App {
                     colors: 8,
                     use_palette: false,
                     dither: openpax_paint::quantize::Dither::None,
+                    pattern: None,
                     scope: Scope::Cel,
                 });
             }

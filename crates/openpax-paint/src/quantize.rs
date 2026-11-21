@@ -236,6 +236,103 @@ pub fn pattern_fill(image: &mut Bitmap, a: Rgba, b: Rgba, density: f32, pattern:
     });
 }
 
+/// The dither patterns that come with OpenPax: name and tile. Opaque pixels are "on".
+pub fn builtin_patterns() -> Vec<(&'static str, Bitmap)> {
+    let make = |w: u32, h: u32, on: fn(i32, i32) -> bool| {
+        let mut b = Bitmap::new(w, h);
+        b.map_pixels(|x, y, _| {
+            if on(x, y) {
+                [0, 0, 0, 255]
+            } else {
+                [0, 0, 0, 0]
+            }
+        });
+        b
+    };
+    vec![
+        ("Checker", make(2, 2, |x, y| (x + y) % 2 == 0)),
+        ("Horizontal lines", make(1, 2, |_, y| y == 0)),
+        ("Vertical lines", make(2, 1, |x, _| x == 0)),
+        ("Diagonal lines", make(4, 4, |x, y| (x + y) % 4 == 0)),
+        ("Dots", make(2, 2, |x, y| x == 0 && y == 0)),
+        (
+            "Sparse dots",
+            make(4, 4, |x, y| (x, y) == (0, 0) || (x, y) == (2, 2)),
+        ),
+        ("Crosshatch", make(4, 4, |x, y| x == 0 || y == 0)),
+        (
+            "Bricks",
+            make(8, 4, |x, y| {
+                y == 3 || (y < 2 && x == 3) || (y == 2 && x == 7)
+            }),
+        ),
+        (
+            "Diamonds",
+            make(4, 4, |x, y| (x - 2).abs() + (y - 2).abs() == 2),
+        ),
+    ]
+}
+
+/// Whether a pattern pixel is "on" (tiled across the image).
+pub fn pattern_on(pattern: &Bitmap, x: i32, y: i32) -> bool {
+    if pattern.width() == 0 || pattern.height() == 0 {
+        return false;
+    }
+    pattern
+        .get(
+            x.rem_euclid(pattern.width() as i32),
+            y.rem_euclid(pattern.height() as i32),
+        )
+        .is_some_and(|c| c[3] > 0)
+}
+
+/// A pattern as a threshold map for ordered dithering: its distinct brightness levels
+/// (transparent counts as white) spread evenly over 0..1, darkest first.
+pub fn pattern_thresholds(pattern: &Bitmap) -> Vec<f32> {
+    let level = |c: Rgba| {
+        if c[3] == 0 {
+            u32::MAX
+        } else {
+            (crate::color::luma(c) * 1000.0) as u32
+        }
+    };
+    let mut levels: Vec<u32> = pattern.pixels().map(level).collect();
+    levels.sort_unstable();
+    levels.dedup();
+    let n = levels.len().max(1) as f32;
+    pattern
+        .pixels()
+        .map(|c| {
+            let rank = levels.iter().position(|l| *l == level(c)).unwrap_or(0);
+            (rank as f32 + 0.5) / n
+        })
+        .collect()
+}
+
+/// Maps every visible pixel to the nearest palette colour, ordered-dithered with a custom
+/// pattern as the threshold map.
+pub fn remap_pattern(image: &Bitmap, palette: &[Rgba], pattern: &Bitmap) -> Bitmap {
+    let mut out = image.clone();
+    if palette.is_empty() || pattern.width() == 0 || pattern.height() == 0 {
+        return remap(image, palette, Dither::None);
+    }
+    let thresholds = pattern_thresholds(pattern);
+    let (pw, ph) = (pattern.width() as i32, pattern.height() as i32);
+    let spread = 255.0 / (palette.len() as f32).cbrt().max(1.0);
+    out.map_pixels(|x, y, c| {
+        if c[3] == 0 {
+            return c;
+        }
+        let t = thresholds[(y.rem_euclid(ph) * pw + x.rem_euclid(pw)) as usize];
+        let shifted =
+            [c[0], c[1], c[2]].map(|v| (f32::from(v) + (t - 0.5) * spread).clamp(0.0, 255.0) as u8);
+        let p =
+            palette[nearest_index(palette, [shifted[0], shifted[1], shifted[2], 255]).unwrap_or(0)];
+        [p[0], p[1], p[2], c[3]]
+    });
+    out
+}
+
 /// Distinct visible colours in an image.
 pub fn count_colors(image: &Bitmap) -> usize {
     let mut v: Vec<Rgba> = image.pixels().filter(|c| c[3] > 0).collect();
@@ -252,6 +349,31 @@ mod tests {
         let mut b = Bitmap::new(32, 4);
         b.map_pixels(|x, y, _| [(x * 8) as u8, (y * 60) as u8, 100, 255]);
         b
+    }
+
+    #[test]
+    fn custom_patterns_dither_and_fill() {
+        let pal = vec![[0, 0, 0, 255], [255, 255, 255, 255]];
+        let grey = Bitmap::filled(4, 4, [128, 128, 128, 255]);
+        let (_, checker) = builtin_patterns()
+            .into_iter()
+            .find(|(n, _)| *n == "Checker")
+            .unwrap();
+        let out = remap_pattern(&grey, &pal, &checker);
+        // Mid grey through a two-level checker comes out as a black and white checkerboard.
+        assert_ne!(out.get(0, 0), out.get(1, 0));
+        assert_eq!(out.get(0, 0), out.get(1, 1));
+        assert_eq!(pattern_thresholds(&checker), vec![0.25, 0.75, 0.75, 0.25]);
+
+        let mut fill = Bitmap::new(4, 1);
+        let (_, lines) = builtin_patterns()
+            .into_iter()
+            .find(|(n, _)| *n == "Vertical lines")
+            .unwrap();
+        pattern_fill(&mut fill, [1, 1, 1, 255], [2, 2, 2, 255], 0.5, Some(&lines));
+        assert_eq!(fill.get(0, 0), Some([1, 1, 1, 255]));
+        assert_eq!(fill.get(1, 0), Some([2, 2, 2, 255]));
+        assert!(pattern_on(&lines, 2, 5) && !pattern_on(&lines, -1, 0));
     }
 
     #[test]
