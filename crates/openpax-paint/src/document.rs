@@ -44,6 +44,37 @@ enum Edit {
         before: Box<State>,
         after: Box<State>,
     },
+    /// A change to one layer's name, visibility or opacity.
+    Layer {
+        index: usize,
+        before: LayerProps,
+        after: LayerProps,
+        /// Only the opacity changed, so a following opacity change may be merged into this.
+        opacity_only: bool,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct LayerProps {
+    name: String,
+    visible: bool,
+    opacity: f32,
+}
+
+impl LayerProps {
+    fn of(layer: &Layer) -> Self {
+        Self {
+            name: layer.name.clone(),
+            visible: layer.visible,
+            opacity: layer.opacity,
+        }
+    }
+
+    fn apply(&self, layer: &mut Layer) {
+        layer.name.clone_from(&self.name);
+        layer.visible = self.visible;
+        layer.opacity = self.opacity;
+    }
 }
 
 #[derive(Debug)]
@@ -70,6 +101,8 @@ pub struct Document {
     redo: Vec<Edit>,
     revision: u64,
     stroke: Option<Stroke>,
+    /// Whether the next opacity change may merge into the previous one (one slider drag).
+    coalescing: bool,
 }
 
 impl Document {
@@ -100,6 +133,7 @@ impl Document {
             redo: Vec::new(),
             revision: 0,
             stroke: None,
+            coalescing: false,
         }
     }
 
@@ -155,27 +189,59 @@ impl Document {
         out
     }
 
-    // ---- layer properties (not part of undo history) ----
+    // ---- layer properties ----
+
+    /// Changes a layer's properties as one undo step. Consecutive opacity changes to the same
+    /// layer merge into one step until [`Self::end_coalescing`] is called.
+    fn layer_edit(&mut self, index: usize, opacity_only: bool, edit: impl FnOnce(&mut Layer)) {
+        let Some(layer) = self.layers.get_mut(index) else {
+            return;
+        };
+        let before = LayerProps::of(layer);
+        edit(layer);
+        let after = LayerProps::of(layer);
+        if before == after {
+            return;
+        }
+        self.revision += 1;
+        self.redo.clear();
+        if opacity_only
+            && self.coalescing
+            && let Some(Edit::Layer {
+                index: last_index,
+                after: last_after,
+                opacity_only: true,
+                ..
+            }) = self.undo.last_mut()
+            && *last_index == index
+        {
+            *last_after = after;
+            return;
+        }
+        self.undo.push(Edit::Layer {
+            index,
+            before,
+            after,
+            opacity_only,
+        });
+        self.coalescing = opacity_only;
+    }
+
+    /// Ends a run of merged opacity changes; the next one starts a new undo step.
+    pub fn end_coalescing(&mut self) {
+        self.coalescing = false;
+    }
 
     pub fn set_layer_visible(&mut self, index: usize, visible: bool) {
-        if let Some(layer) = self.layers.get_mut(index) {
-            layer.visible = visible;
-            self.revision += 1;
-        }
+        self.layer_edit(index, false, |layer| layer.visible = visible);
     }
 
     pub fn set_layer_opacity(&mut self, index: usize, opacity: f32) {
-        if let Some(layer) = self.layers.get_mut(index) {
-            layer.opacity = opacity.clamp(0.0, 1.0);
-            self.revision += 1;
-        }
+        self.layer_edit(index, true, |layer| layer.opacity = opacity.clamp(0.0, 1.0));
     }
 
     pub fn set_layer_name(&mut self, index: usize, name: String) {
-        if let Some(layer) = self.layers.get_mut(index) {
-            layer.name = name;
-            self.revision += 1;
-        }
+        self.layer_edit(index, false, |layer| layer.name = name);
     }
 
     // ---- selection ----
@@ -280,6 +346,15 @@ impl Document {
         stroke.last = to;
         self.stroke = Some(stroke);
         self.revision += 1;
+    }
+
+    /// Abandons the current stroke, putting the layer and selection back as they were.
+    pub fn stroke_cancel(&mut self) {
+        if let Some(stroke) = self.stroke.take() {
+            self.layers[self.active].pixels = stroke.base;
+            self.selection = stroke.selection_before;
+            self.revision += 1;
+        }
     }
 
     /// Finishes the current stroke and records it in the undo history.
@@ -415,6 +490,16 @@ impl Document {
         });
     }
 
+    /// Moves the active layer to `index` (0 is the bottom) as a single undo step.
+    pub fn move_layer_to(&mut self, index: usize) {
+        self.structural(|doc| {
+            let target = index.min(doc.layers.len() - 1);
+            let layer = doc.layers.remove(doc.active);
+            doc.layers.insert(target, layer);
+            doc.active = target;
+        });
+    }
+
     /// Composites the active layer onto the one below it.
     pub fn merge_down(&mut self) {
         self.structural(|doc| {
@@ -484,7 +569,9 @@ impl Document {
                 self.active = *layer;
             }
             Edit::Structure { before, .. } => self.restore(before),
+            Edit::Layer { index, before, .. } => before.apply(&mut self.layers[*index]),
         }
+        self.coalescing = false;
         self.redo.push(edit);
         self.revision += 1;
         true
@@ -508,7 +595,9 @@ impl Document {
                 self.active = *layer;
             }
             Edit::Structure { after, .. } => self.restore(after),
+            Edit::Layer { index, after, .. } => after.apply(&mut self.layers[*index]),
         }
+        self.coalescing = false;
         self.undo.push(edit);
         self.revision += 1;
         true
@@ -804,5 +893,80 @@ mod tests {
         doc.undo();
         assert_eq!((doc.width(), doc.height()), (2, 2));
         assert_eq!(ascii(&doc), ["#.", ".."]);
+    }
+
+    #[test]
+    fn layer_properties_are_undoable() {
+        let mut doc = Document::new(2, 2);
+        doc.set_layer_visible(0, false);
+        doc.set_layer_name(0, "Base".to_owned());
+        assert!(!doc.layers()[0].visible);
+
+        assert!(doc.undo());
+        assert_eq!(doc.layers()[0].name, "Layer 1");
+        assert!(doc.undo());
+        assert!(doc.layers()[0].visible);
+        assert!(!doc.can_undo());
+        assert!(doc.redo() && doc.redo());
+        assert_eq!(doc.layers()[0].name, "Base");
+        assert!(!doc.layers()[0].visible);
+
+        // Setting a property to the value it already has records nothing.
+        let revision = doc.revision();
+        doc.set_layer_visible(0, false);
+        assert_eq!(doc.revision(), revision);
+    }
+
+    #[test]
+    fn one_opacity_drag_is_one_undo_step() {
+        let mut doc = Document::new(2, 2);
+        for step in 1..=5 {
+            doc.set_layer_opacity(0, 1.0 - step as f32 * 0.1);
+        }
+        doc.end_coalescing();
+        doc.set_layer_opacity(0, 0.2);
+
+        assert!(doc.undo());
+        assert!((doc.layers()[0].opacity - 0.5).abs() < 1e-6);
+        assert!(doc.undo());
+        assert_eq!(doc.layers()[0].opacity, 1.0);
+        assert!(!doc.can_undo());
+    }
+
+    #[test]
+    fn move_layer_to_reorders_in_one_step() {
+        let mut doc = Document::new(1, 1);
+        doc.add_layer();
+        doc.add_layer();
+        let names = |doc: &Document| -> Vec<String> {
+            doc.layers().iter().map(|l| l.name.clone()).collect()
+        };
+        assert_eq!(names(&doc), ["Layer 1", "Layer 2", "Layer 3"]);
+
+        doc.move_layer_to(0);
+        assert_eq!(names(&doc), ["Layer 3", "Layer 1", "Layer 2"]);
+        assert_eq!(doc.active(), 0);
+        doc.move_layer_to(99);
+        assert_eq!(names(&doc), ["Layer 1", "Layer 2", "Layer 3"]);
+        assert_eq!(doc.active(), 2);
+
+        assert!(doc.undo());
+        assert_eq!(names(&doc), ["Layer 3", "Layer 1", "Layer 2"]);
+    }
+
+    #[test]
+    fn cancelled_stroke_leaves_no_trace() {
+        let mut doc = Document::new(4, 4);
+        let settings = ToolSettings {
+            color: [255, 0, 0, 255],
+            ..Default::default()
+        };
+        doc.stroke_begin(ToolKind::Pencil, settings, (0, 0));
+        doc.stroke_move((3, 3));
+        assert_eq!(doc.flatten().get(2, 2), Some([255, 0, 0, 255]));
+        doc.stroke_cancel();
+        assert!(!doc.stroke_active());
+        assert_eq!(doc.flatten(), Bitmap::new(4, 4));
+        assert!(!doc.can_undo());
     }
 }
