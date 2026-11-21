@@ -83,6 +83,26 @@ Ready-made builds for Windows, macOS (Apple silicon and Intel) and Linux are on 
 [releases page](https://github.com/cantmediaus-design/OpenPax/releases/latest). Unpack the archive
 anywhere and run `openpax`; each archive also includes the `openpax-cli` command-line tool.
 
+## Changelog
+
+### [v0.1.0](https://github.com/cantmediaus-design/OpenPax/releases/tag/v0.1.0) (2026-11-21)
+
+The first public release, with ready-made builds for Windows, macOS (Apple silicon and Intel)
+and Linux.
+
+- **Packs**: create, open and import packs, edit `pack.mcmeta`, export zips Minecraft loads,
+  Load Default Pack and Remix Packs.
+- **Explorer**: search, kind and namespace filters, thumbnail grid, rename, move, duplicate and
+  delete with a restorable trash, and pack icon editing.
+- **Pixel editor**: a new document model with frames, cels, masks and blend modes; drawing,
+  shading, dithering and selection tools; palettes and quantizing; drop images, animations and
+  palettes onto the editor; animation export including animated WebP.
+- **3D model editor**: block and item models in a wgpu viewport with element, face, UV and
+  texture editing, plus model optimisation (face culling, cube merging, UV cleanup).
+- **Workflow**: command palette, rebindable shortcuts, clipboard, session restore, crash
+  recovery and a first-run tour.
+- **Command line**: `openpax-cli` converts, packs, scales, quantizes, validates and scripts images.
+
 ## Building
 
 You need a recent stable [Rust toolchain](https://rustup.rs).
