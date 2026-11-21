@@ -27,7 +27,13 @@ fn ascii(doc: &Document) -> Vec<String> {
     (0..flat.height() as i32)
         .map(|y| {
             (0..flat.width() as i32)
-                .map(|x| if flat.get(x, y).unwrap()[3] > 0 { '#' } else { '.' })
+                .map(|x| {
+                    if flat.get(x, y).unwrap()[3] > 0 {
+                        '#'
+                    } else {
+                        '.'
+                    }
+                })
                 .collect()
         })
         .collect()
@@ -157,7 +163,11 @@ fn fill_contiguous_versus_global() {
     click(&mut doc, ToolKind::Fill, settings(BLUE), (0, 0));
     assert_eq!(doc.flatten().get(1, 2), Some(BLUE));
     assert_eq!(doc.flatten().get(2, 1), Some(RED));
-    assert_eq!(doc.flatten().get(4, 0), Some(TRANSPARENT), "wall stops contiguous fill");
+    assert_eq!(
+        doc.flatten().get(4, 0),
+        Some(TRANSPARENT),
+        "wall stops contiguous fill"
+    );
 
     let mut doc = build();
     let global = ToolSettings {
@@ -172,9 +182,24 @@ fn fill_contiguous_versus_global() {
 #[test]
 fn fill_tolerance_and_diagonals() {
     let mut doc = Document::new(3, 1);
-    click(&mut doc, ToolKind::Pencil, settings([10, 10, 10, 255]), (0, 0));
-    click(&mut doc, ToolKind::Pencil, settings([14, 10, 10, 255]), (1, 0));
-    click(&mut doc, ToolKind::Pencil, settings([90, 10, 10, 255]), (2, 0));
+    click(
+        &mut doc,
+        ToolKind::Pencil,
+        settings([10, 10, 10, 255]),
+        (0, 0),
+    );
+    click(
+        &mut doc,
+        ToolKind::Pencil,
+        settings([14, 10, 10, 255]),
+        (1, 0),
+    );
+    click(
+        &mut doc,
+        ToolKind::Pencil,
+        settings([90, 10, 10, 255]),
+        (2, 0),
+    );
     let s = ToolSettings {
         tolerance: 5,
         ..settings(BLUE)
@@ -191,7 +216,11 @@ fn fill_tolerance_and_diagonals() {
         ..settings(BLUE)
     };
     click(&mut doc, ToolKind::Fill, diag, (0, 0));
-    assert_eq!(doc.flatten().get(1, 1), Some(BLUE), "spreads across the diagonal");
+    assert_eq!(
+        doc.flatten().get(1, 1),
+        Some(BLUE),
+        "spreads across the diagonal"
+    );
 }
 
 #[test]
@@ -225,7 +254,11 @@ fn shading_steps_along_the_ramp() {
     click(&mut doc, ToolKind::Shade, darker, (0, 0));
     assert_eq!(doc.flatten().get(0, 0), Some(ramp[0]));
     click(&mut doc, ToolKind::Shade, s, (1, 0));
-    assert_eq!(doc.flatten().get(1, 0), Some(TRANSPARENT), "colours off the ramp are left alone");
+    assert_eq!(
+        doc.flatten().get(1, 0),
+        Some(TRANSPARENT),
+        "colours off the ramp are left alone"
+    );
 }
 
 #[test]
@@ -304,7 +337,10 @@ fn move_selection_and_undo_restores_it() {
     drag(&mut doc, ToolKind::Move, settings(RED), (0, 0), (2, 1));
     assert_eq!(ascii(&doc), ["....", "..#.", "....", "...."]);
     assert_eq!(doc.selection_bounds(), Some(Rect::new(2, 1, 2, 2)));
-    assert!(doc.floating().is_some(), "moved pixels float until put down");
+    assert!(
+        doc.floating().is_some(),
+        "moved pixels float until put down"
+    );
 
     assert!(doc.undo());
     assert_eq!(ascii(&doc), ["#...", "....", "....", "...."]);
@@ -369,14 +405,20 @@ fn picker_reads_composite_without_editing() {
     click(&mut doc, ToolKind::Pencil, settings(RED), (1, 1));
     doc.add_layer();
     let revision = doc.revision();
-    assert_eq!(doc.stroke_begin(ToolKind::Picker, &settings(BLUE), (1, 1)), Some(RED));
+    assert_eq!(
+        doc.stroke_begin(ToolKind::Picker, &settings(BLUE), (1, 1)),
+        Some(RED)
+    );
     assert!(!doc.stroke_active());
     assert_eq!(doc.revision(), revision);
     let own = ToolSettings {
         pick_active_layer: true,
         ..settings(BLUE)
     };
-    assert_eq!(doc.stroke_begin(ToolKind::Picker, &own, (1, 1)), Some(TRANSPARENT));
+    assert_eq!(
+        doc.stroke_begin(ToolKind::Picker, &own, (1, 1)),
+        Some(TRANSPARENT)
+    );
 }
 
 #[test]
@@ -428,7 +470,11 @@ fn layers_composite_and_structural_undo() {
 
     doc.move_layer(false);
     assert_eq!(doc.active(), 0);
-    assert_eq!(doc.flatten().get(0, 0), Some(RED), "blue layer is now underneath");
+    assert_eq!(
+        doc.flatten().get(0, 0),
+        Some(RED),
+        "blue layer is now underneath"
+    );
     doc.undo();
     assert_eq!(doc.flatten().get(0, 0), Some(BLUE));
 
@@ -458,15 +504,30 @@ fn locked_layers_refuse_paint_and_alpha_lock_keeps_shape() {
     });
     drag(&mut doc, ToolKind::Pencil, settings(BLUE), (0, 0), (1, 0));
     assert_eq!(doc.flatten().get(0, 0), Some(BLUE));
-    assert_eq!(doc.flatten().get(1, 0), Some(TRANSPARENT), "alpha lock keeps empty pixels empty");
+    assert_eq!(
+        doc.flatten().get(1, 0),
+        Some(TRANSPARENT),
+        "alpha lock keeps empty pixels empty"
+    );
 }
 
 #[test]
 fn blend_modes_clipping_and_groups() {
     let mut doc = Document::new(2, 1);
-    click(&mut doc, ToolKind::Pencil, settings([128, 128, 128, 255]), (0, 0));
+    click(
+        &mut doc,
+        ToolKind::Pencil,
+        settings([128, 128, 128, 255]),
+        (0, 0),
+    );
     doc.add_layer();
-    drag(&mut doc, ToolKind::Pencil, settings([128, 128, 128, 255]), (0, 0), (1, 0));
+    drag(
+        &mut doc,
+        ToolKind::Pencil,
+        settings([128, 128, 128, 255]),
+        (0, 0),
+        (1, 0),
+    );
     doc.set_layer_blend(1, BlendMode::Difference);
     assert_eq!(doc.flatten().get(0, 0), Some([0, 0, 0, 255]));
     doc.set_layer_blend(1, BlendMode::Normal);
@@ -495,7 +556,13 @@ fn reference_layers_are_not_exported() {
     let mut doc = Document::new(2, 2);
     doc.add_reference_layer("Ref", &Bitmap::filled(2, 2, RED));
     assert_eq!(doc.flatten().get(0, 0), Some(TRANSPARENT));
-    let shown = doc.render(0, RenderOptions { reference: true, solo: None });
+    let shown = doc.render(
+        0,
+        RenderOptions {
+            reference: true,
+            solo: None,
+        },
+    );
     assert!(shown.get(0, 0).unwrap()[3] > 0);
 }
 
@@ -532,7 +599,10 @@ fn merge_visible_flatten_and_layer_via_cut() {
     assert_eq!(doc.layers().len(), 1);
     assert_eq!(doc.flatten(), flat);
 
-    doc.select_mask(Mask::from_rect(2, 1, Rect::new(0, 0, 1, 1)), SelectMode::Replace);
+    doc.select_mask(
+        Mask::from_rect(2, 1, Rect::new(0, 0, 1, 1)),
+        SelectMode::Replace,
+    );
     doc.layer_from_selection(true);
     assert_eq!(doc.layers().len(), 2);
     assert_eq!(doc.layer_pixels(0).get(0, 0), Some(TRANSPARENT));
@@ -545,14 +615,26 @@ fn frames_links_and_tags() {
     click(&mut doc, ToolKind::Pencil, settings(RED), (0, 0));
     doc.add_frame(true);
     assert_eq!((doc.frame_count(), doc.current_frame()), (2, 1));
-    assert_eq!(doc.flatten().get(0, 0), Some(RED), "duplicated frame keeps pixels");
+    assert_eq!(
+        doc.flatten().get(0, 0),
+        Some(RED),
+        "duplicated frame keeps pixels"
+    );
     click(&mut doc, ToolKind::Pencil, settings(BLUE), (1, 0));
-    assert_eq!(doc.flatten_frame(0).get(1, 0), Some(TRANSPARENT), "frames are independent");
+    assert_eq!(
+        doc.flatten_frame(0).get(1, 0),
+        Some(TRANSPARENT),
+        "frames are independent"
+    );
 
     doc.add_linked_frame();
     assert!(doc.is_linked(0, 1) && doc.is_linked(0, 2));
     click(&mut doc, ToolKind::Eraser, settings(RED), (1, 0));
-    assert_eq!(doc.flatten_frame(1).get(1, 0), Some(TRANSPARENT), "linked cels share pixels");
+    assert_eq!(
+        doc.flatten_frame(1).get(1, 0),
+        Some(TRANSPARENT),
+        "linked cels share pixels"
+    );
     doc.unlink_cel(0, 2);
     assert!(!doc.is_linked(0, 1));
 
@@ -565,7 +647,11 @@ fn frames_links_and_tags() {
     });
     doc.set_current_frame(0);
     doc.add_frame(false);
-    assert_eq!((doc.tags()[0].from, doc.tags()[0].to), (2, 3), "tags shift with inserted frames");
+    assert_eq!(
+        (doc.tags()[0].from, doc.tags()[0].to),
+        (2, 3),
+        "tags shift with inserted frames"
+    );
     doc.set_current_frame(2);
     doc.remove_frame();
     assert_eq!((doc.tags()[0].from, doc.tags()[0].to), (2, 2));
@@ -579,7 +665,11 @@ fn frames_links_and_tags() {
     doc.end_coalescing();
     assert_eq!(doc.frames()[0].duration_ms, 250);
     assert!(doc.undo());
-    assert_eq!(doc.frames()[0].duration_ms, 100, "one duration drag is one undo step");
+    assert_eq!(
+        doc.frames()[0].duration_ms,
+        100,
+        "one duration drag is one undo step"
+    );
 }
 
 #[test]
@@ -646,8 +736,13 @@ fn resize_flip_and_clear() {
 fn filters_respect_scope_and_selection() {
     let mut doc = Document::new(2, 1);
     drag(&mut doc, ToolKind::Pencil, settings(RED), (0, 0), (1, 0));
-    doc.select_mask(Mask::from_rect(2, 1, Rect::new(1, 0, 1, 1)), SelectMode::Replace);
-    doc.apply_filter("Invert", Scope::Cel, |b| crate::effects::Effect::Invert.apply(b));
+    doc.select_mask(
+        Mask::from_rect(2, 1, Rect::new(1, 0, 1, 1)),
+        SelectMode::Replace,
+    );
+    doc.apply_filter("Invert", Scope::Cel, |b| {
+        crate::effects::Effect::Invert.apply(b)
+    });
     assert_eq!(doc.flatten().get(0, 0), Some(RED));
     assert_eq!(doc.flatten().get(1, 0), Some([0, 255, 255, 255]));
 }
@@ -659,7 +754,12 @@ fn indexed_mode_snaps_to_the_palette() {
         e.palette = vec![[0, 0, 0, 255], [250, 0, 0, 255]];
         e.indexed = true;
     });
-    click(&mut doc, ToolKind::Pencil, settings([200, 10, 10, 255]), (0, 0));
+    click(
+        &mut doc,
+        ToolKind::Pencil,
+        settings([200, 10, 10, 255]),
+        (0, 0),
+    );
     assert_eq!(doc.flatten().get(0, 0), Some([250, 0, 0, 255]));
 }
 
@@ -705,7 +805,8 @@ fn move_layer_to_reorders_in_one_step() {
     let mut doc = Document::new(1, 1);
     doc.add_layer();
     doc.add_layer();
-    let names = |doc: &Document| -> Vec<String> { doc.layers().iter().map(|l| l.name.clone()).collect() };
+    let names =
+        |doc: &Document| -> Vec<String> { doc.layers().iter().map(|l| l.name.clone()).collect() };
     assert_eq!(names(&doc), ["Layer 1", "Layer 2", "Layer 3"]);
 
     doc.move_layer_to(0);
@@ -732,7 +833,11 @@ fn copy_and_paste_onto_a_new_layer() {
     assert_eq!(doc.layers().len(), 2);
     assert_eq!(doc.active(), 1);
     assert_eq!(doc.layers()[1].name, "Pasted");
-    assert_eq!(doc.selection_bounds(), Some(Rect::new(3, 2, 1, 2)), "clipped to the canvas");
+    assert_eq!(
+        doc.selection_bounds(),
+        Some(Rect::new(3, 2, 1, 2)),
+        "clipped to the canvas"
+    );
     assert_eq!(ascii(&doc), ["##..", "....", "...#", "...."]);
 
     assert!(doc.undo());

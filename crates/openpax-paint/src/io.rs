@@ -147,7 +147,9 @@ fn decode_v1(header_json: &str, strip: &Bitmap) -> Result<Document, Error> {
         || strip.width() != header.width
         || strip.height() != header.height * count
     {
-        return Err(Error::Layers("layer image does not match its header".into()));
+        return Err(Error::Layers(
+            "layer image does not match its header".into(),
+        ));
     }
     let mut cels = BTreeMap::new();
     let layers = header
@@ -191,15 +193,25 @@ fn decode_v2(header_json: &str, strip: &Bitmap) -> Result<Document, Error> {
     let (w, h) = (header.width, header.height);
     let n = header.cels.len() as u32;
     if w == 0 || h == 0 || header.layers.is_empty() || strip.width() < w || strip.height() < h * n {
-        return Err(Error::Layers("layer image does not match its header".into()));
+        return Err(Error::Layers(
+            "layer image does not match its header".into(),
+        ));
     }
     let mut cels = BTreeMap::new();
     for (i, id) in header.cels.iter().enumerate() {
-        cels.insert(*id, strip.crop(Rect::new(0, (i as u32 * h) as i32, w as i32, h as i32)));
+        cels.insert(
+            *id,
+            strip.crop(Rect::new(0, (i as u32 * h) as i32, w as i32, h as i32)),
+        );
     }
     if let Some(set) = &mut header.extras.tileset {
         let top = (n * h) as i32;
-        let atlas = strip.crop(Rect::new(0, top, strip.width() as i32, strip.height() as i32 - top));
+        let atlas = strip.crop(Rect::new(
+            0,
+            top,
+            strip.width() as i32,
+            strip.height() as i32 - top,
+        ));
         set.load_atlas(&atlas, header.tile_columns.max(1));
     }
     Ok(Document::from_parts(Parts {
@@ -312,6 +324,9 @@ mod tests {
         let doc = Document::new(4, 2);
         let (json, _) = encode_layered(&doc).unwrap();
         let wrong = encode_png(&Bitmap::new(4, 1)).unwrap();
-        assert!(matches!(decode_layered(&json, &wrong), Err(Error::Layers(_))));
+        assert!(matches!(
+            decode_layered(&json, &wrong),
+            Err(Error::Layers(_))
+        ));
     }
 }

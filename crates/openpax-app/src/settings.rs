@@ -131,9 +131,7 @@ impl Settings {
             palette: if self.palette.is_empty() {
                 defaults.palette
             } else {
-                Palette {
-                    colors: self.palette.clone(),
-                }
+                Palette::new("Palette", self.palette.clone())
             },
             recent: self.recent_colors.clone(),
         }
@@ -173,7 +171,7 @@ mod tests {
         assert_eq!(back.tool, ToolKind::Ellipse);
         assert_eq!(back.settings, tools.settings);
         assert_eq!(back.secondary, tools.secondary);
-        assert_eq!(back.palette, tools.palette);
+        assert_eq!(back.palette.colors, tools.palette.colors);
         assert_eq!(back.recent, tools.recent);
     }
 

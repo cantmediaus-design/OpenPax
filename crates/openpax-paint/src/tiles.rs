@@ -21,7 +21,12 @@ pub enum GridKind {
 }
 
 impl GridKind {
-    pub const ALL: [GridKind; 4] = [Self::Rectangular, Self::Isometric, Self::HexPointy, Self::HexFlat];
+    pub const ALL: [GridKind; 4] = [
+        Self::Rectangular,
+        Self::Isometric,
+        Self::HexPointy,
+        Self::HexFlat,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -39,7 +44,12 @@ pub enum Collision {
     None,
     Solid,
     /// A box inside the tile, in tile pixels.
-    Box { x: i32, y: i32, w: i32, h: i32 },
+    Box {
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+    },
 }
 
 /// Game data attached to a tile.
@@ -239,7 +249,11 @@ impl Tileset {
         let mut out = Bitmap::new(columns * self.tile_w, rows * self.tile_h);
         for (i, tile) in self.tiles.iter().enumerate() {
             let (c, r) = (i as u32 % columns, i as u32 / columns);
-            out.blit(&tile.image, (c * self.tile_w) as i32, (r * self.tile_h) as i32);
+            out.blit(
+                &tile.image,
+                (c * self.tile_w) as i32,
+                (r * self.tile_h) as i32,
+            );
         }
         out
     }
@@ -322,8 +336,14 @@ impl Tilemap {
                 let origin = (self.rows as i32 - 1) * tw / 2;
                 ((col - row) * tw / 2 + origin, (col + row) * th / 2)
             }
-            GridKind::HexPointy => (col * tw + if row % 2 == 1 { tw / 2 } else { 0 }, row * th * 3 / 4),
-            GridKind::HexFlat => (col * tw * 3 / 4, row * th + if col % 2 == 1 { th / 2 } else { 0 }),
+            GridKind::HexPointy => (
+                col * tw + if row % 2 == 1 { tw / 2 } else { 0 },
+                row * th * 3 / 4,
+            ),
+            GridKind::HexFlat => (
+                col * tw * 3 / 4,
+                row * th + if col % 2 == 1 { th / 2 } else { 0 },
+            ),
         };
         (x + self.offset.0, y + self.offset.1)
     }
@@ -332,7 +352,10 @@ impl Tilemap {
     pub fn cell_at(&self, set: &Tileset, x: i32, y: i32) -> Option<(i32, i32)> {
         let (tw, th) = (set.tile_w as i32, set.tile_h as i32);
         if self.grid == GridKind::Rectangular {
-            let (cx, cy) = ((x - self.offset.0).div_euclid(tw), (y - self.offset.1).div_euclid(th));
+            let (cx, cy) = (
+                (x - self.offset.0).div_euclid(tw),
+                (y - self.offset.1).div_euclid(th),
+            );
             return (cx >= 0 && cy >= 0 && (cx as u32) < self.cols && (cy as u32) < self.rows)
                 .then_some((cx, cy));
         }
@@ -371,7 +394,14 @@ impl Tilemap {
     }
 
     /// Which neighbours of a cell share a terrain, as N/E/S/W(/corner) bits.
-    pub fn neighbour_mask(&self, set: &Tileset, col: i32, row: i32, terrain: usize, mode: AutotileMode) -> u8 {
+    pub fn neighbour_mask(
+        &self,
+        set: &Tileset,
+        col: i32,
+        row: i32,
+        terrain: usize,
+        mode: AutotileMode,
+    ) -> u8 {
         let is = |c: i32, r: i32| {
             self.get(c, r)
                 .and_then(|t| set.tiles.get(t.id))
@@ -396,7 +426,9 @@ impl Tilemap {
 
     /// Paints a terrain at a cell and re-picks the variants of it and its neighbours.
     pub fn paint_terrain(&mut self, set: &Tileset, terrain: usize, col: i32, row: i32) {
-        let Some(t) = set.terrains.get(terrain) else { return };
+        let Some(t) = set.terrains.get(terrain) else {
+            return;
+        };
         let Some(any) = set
             .tiles
             .iter()
@@ -553,9 +585,17 @@ impl Tilemap {
             }],
         });
         if matches!(self.grid, GridKind::HexPointy | GridKind::HexFlat) {
-            map["staggeraxis"] = json!(if self.grid == GridKind::HexPointy { "y" } else { "x" });
+            map["staggeraxis"] = json!(if self.grid == GridKind::HexPointy {
+                "y"
+            } else {
+                "x"
+            });
             map["staggerindex"] = json!("odd");
-            map["hexsidelength"] = json!(if self.grid == GridKind::HexPointy { set.tile_h / 2 } else { set.tile_w / 2 });
+            map["hexsidelength"] = json!(if self.grid == GridKind::HexPointy {
+                set.tile_h / 2
+            } else {
+                set.tile_w / 2
+            });
         }
         map
     }
@@ -578,9 +618,18 @@ mod tests {
         let mut img = Bitmap::new(6, 2);
         img.blit(&Bitmap::filled(2, 2, [1, 1, 1, 255]), 0, 0);
         img.blit(&Bitmap::filled(2, 2, [1, 1, 1, 255]), 4, 0);
-        assert_eq!(Tileset::slice(&img, 2, 2, (0, 0), (0, 0), false, false).len(), 3);
-        assert_eq!(Tileset::slice(&img, 2, 2, (0, 0), (0, 0), true, false).len(), 2);
-        assert_eq!(Tileset::slice(&img, 2, 2, (0, 0), (0, 0), true, true).len(), 1);
+        assert_eq!(
+            Tileset::slice(&img, 2, 2, (0, 0), (0, 0), false, false).len(),
+            3
+        );
+        assert_eq!(
+            Tileset::slice(&img, 2, 2, (0, 0), (0, 0), true, false).len(),
+            2
+        );
+        assert_eq!(
+            Tileset::slice(&img, 2, 2, (0, 0), (0, 0), true, true).len(),
+            1
+        );
     }
 
     #[test]
@@ -590,7 +639,15 @@ mod tests {
         img.set(0, 0, [255, 0, 0, 255]);
         set.add_tile(img);
         let mut map = Tilemap::new(GridKind::Rectangular, 2, 1);
-        map.set(1, 0, Some(TileRef { id: 0, flip_h: true, ..Default::default() }));
+        map.set(
+            1,
+            0,
+            Some(TileRef {
+                id: 0,
+                flip_h: true,
+                ..Default::default()
+            }),
+        );
         let out = map.render(&set, 4, 1);
         assert_eq!(out.get(3, 0), Some([255, 0, 0, 255]));
         assert_eq!(out.get(2, 0), Some(crate::TRANSPARENT));
@@ -635,7 +692,15 @@ mod tests {
     fn tiled_export_encodes_flips() {
         let set = set_with(1);
         let mut map = Tilemap::new(GridKind::Rectangular, 1, 1);
-        map.set(0, 0, Some(TileRef { id: 0, flip_h: true, ..Default::default() }));
+        map.set(
+            0,
+            0,
+            Some(TileRef {
+                id: 0,
+                flip_h: true,
+                ..Default::default()
+            }),
+        );
         let json = map.to_tiled(&set, "tiles.png", 1);
         assert_eq!(json["layers"][0]["data"][0], json!(0x8000_0001u32));
     }

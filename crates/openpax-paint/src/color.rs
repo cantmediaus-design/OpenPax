@@ -115,7 +115,9 @@ pub fn nearest_index(palette: &[Rgba], c: Rgba) -> Option<usize> {
 }
 
 /// Kinds of colour-vision simulation for previews.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum VisionSim {
     #[default]
     Normal,
@@ -169,7 +171,11 @@ impl VisionSim {
             ],
         };
         let v = [c[0], c[1], c[2]].map(f32::from);
-        let out = m.map(|row| (row[0] * v[0] + row[1] * v[1] + row[2] * v[2]).round().clamp(0.0, 255.0) as u8);
+        let out = m.map(|row| {
+            (row[0] * v[0] + row[1] * v[1] + row[2] * v[2])
+                .round()
+                .clamp(0.0, 255.0) as u8
+        });
         [out[0], out[1], out[2], c[3]]
     }
 }
@@ -180,7 +186,12 @@ mod tests {
 
     #[test]
     fn hsv_round_trip() {
-        for c in [[255, 0, 0, 255], [12, 200, 99, 255], [0, 0, 0, 255], [255, 255, 255, 255]] {
+        for c in [
+            [255, 0, 0, 255],
+            [12, 200, 99, 255],
+            [0, 0, 0, 255],
+            [255, 255, 255, 255],
+        ] {
             let (h, s, v) = rgb_to_hsv(c);
             let rgb = hsv_to_rgb(h, s, v);
             assert_eq!([rgb[0], rgb[1], rgb[2], 255], c);

@@ -155,15 +155,20 @@ impl Effect {
             }
             Self::ColorOverlay { color, amount } => map(src, |c| {
                 let t = amount.clamp(0.0, 1.0) * f32::from(color[3]) / 255.0;
-                let mix = |a: u8, b: u8| {
-                    (f32::from(a) * (1.0 - t) + f32::from(b) * t).round() as u8
-                };
-                [mix(c[0], color[0]), mix(c[1], color[1]), mix(c[2], color[2]), c[3]]
+                let mix =
+                    |a: u8, b: u8| (f32::from(a) * (1.0 - t) + f32::from(b) * t).round() as u8;
+                [
+                    mix(c[0], color[0]),
+                    mix(c[1], color[1]),
+                    mix(c[2], color[2]),
+                    c[3],
+                ]
             }),
             Self::Invert => map(src, |c| [255 - c[0], 255 - c[1], 255 - c[2], c[3]]),
             Self::Desaturate => map(src, |c| {
-                let l = (0.299 * f32::from(c[0]) + 0.587 * f32::from(c[1]) + 0.114 * f32::from(c[2]))
-                    .round() as u8;
+                let l =
+                    (0.299 * f32::from(c[0]) + 0.587 * f32::from(c[1]) + 0.114 * f32::from(c[2]))
+                        .round() as u8;
                 [l, l, l, c[3]]
             }),
         }
@@ -182,7 +187,16 @@ pub fn outline(src: &Bitmap, color: Rgba, place: OutlinePlace, diagonal: bool) -
     let mut out = src.clone();
     let opaque = |x: i32, y: i32| src.get(x, y).is_some_and(|c| c[3] > 0);
     let neighbours: &[(i32, i32)] = if diagonal {
-        &[(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (-1, -1), (1, -1), (-1, 1)]
+        &[
+            (1, 0),
+            (-1, 0),
+            (0, 1),
+            (0, -1),
+            (1, 1),
+            (-1, -1),
+            (1, -1),
+            (-1, 1),
+        ]
     } else {
         &[(1, 0), (-1, 0), (0, 1), (0, -1)]
     };
@@ -190,8 +204,12 @@ pub fn outline(src: &Bitmap, color: Rgba, place: OutlinePlace, diagonal: bool) -
         for x in 0..src.width() as i32 {
             let here = opaque(x, y);
             let hit = match place {
-                OutlinePlace::Outside => !here && neighbours.iter().any(|(dx, dy)| opaque(x + dx, y + dy)),
-                OutlinePlace::Inside => here && neighbours.iter().any(|(dx, dy)| !opaque(x + dx, y + dy)),
+                OutlinePlace::Outside => {
+                    !here && neighbours.iter().any(|(dx, dy)| opaque(x + dx, y + dy))
+                }
+                OutlinePlace::Inside => {
+                    here && neighbours.iter().any(|(dx, dy)| !opaque(x + dx, y + dy))
+                }
             };
             if hit {
                 out.set(x, y, color);
@@ -259,7 +277,11 @@ mod tests {
     fn swap_and_replace() {
         let mut b = Bitmap::filled(2, 1, [1, 1, 1, 255]);
         b.set(1, 0, [2, 2, 2, 255]);
-        palette_swap(&mut b, &[[1, 1, 1, 255], [2, 2, 2, 255]], &[[9, 9, 9, 255], [8, 8, 8, 255]]);
+        palette_swap(
+            &mut b,
+            &[[1, 1, 1, 255], [2, 2, 2, 255]],
+            &[[9, 9, 9, 255], [8, 8, 8, 255]],
+        );
         assert_eq!(b.get(0, 0), Some([9, 9, 9, 255]));
         assert_eq!(b.get(1, 0), Some([8, 8, 8, 255]));
         replace_color(&mut b, [9, 9, 9, 255], [0, 0, 0, 255], 1);

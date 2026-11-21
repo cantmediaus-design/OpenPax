@@ -4,14 +4,17 @@
 //! Nothing here depends on a UI toolkit, so every tool can be unit tested and the same code
 //! powers the command-line tool.
 
+pub mod analysis;
 mod bitmap;
 pub mod blend;
 pub mod color;
 mod document;
 pub mod effects;
+pub mod export;
 mod io;
 pub mod mask;
 mod palette;
+pub mod quantize;
 pub mod raster;
 pub mod resample;
 pub mod tiles;
@@ -25,6 +28,6 @@ pub use document::{
 };
 pub use io::{Error, decode_image, decode_layered, decode_png, encode_layered, encode_png};
 pub use mask::{Mask, SelectMode};
-pub use palette::Palette;
+pub use palette::{Palette, PaletteFormat};
 pub use resample::ScaleMethod;
 pub use tools::{BrushShape, Symmetry, ToolKind, ToolSettings, colors_match, region_mask};

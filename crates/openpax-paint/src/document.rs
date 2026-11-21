@@ -244,10 +244,15 @@ impl Scope {
 pub enum Transform {
     FlipHorizontal,
     FlipVertical,
-    Rotate90 { clockwise: bool },
+    Rotate90 {
+        clockwise: bool,
+    },
     Rotate180,
     /// Degrees clockwise; `smooth` uses RotSprite.
-    Rotate { degrees: f32, smooth: bool },
+    Rotate {
+        degrees: f32,
+        smooth: bool,
+    },
     Scale {
         width: u32,
         height: u32,
@@ -264,7 +269,10 @@ impl Transform {
             Self::Rotate180 => image.rotated_180(),
             Self::Rotate { degrees, smooth } => {
                 // Rotate on a canvas big enough for any angle, then trim.
-                let side = ((image.width().pow(2) + image.height().pow(2)) as f32).sqrt().ceil() as u32 + 2;
+                let side = ((image.width().pow(2) + image.height().pow(2)) as f32)
+                    .sqrt()
+                    .ceil() as u32
+                    + 2;
                 let dx = (side - image.width()) as i32 / 2;
                 let dy = (side - image.height()) as i32 / 2;
                 let padded = image.resized_offset(side, side, dx, dy);
@@ -452,6 +460,8 @@ pub struct Document {
     stroke: Option<Stroke>,
     /// Whether the next mergeable edit may merge into the previous one.
     coalescing: bool,
+    /// Inside [`Document::batch`]: edits are not recorded one by one.
+    batching: u32,
 }
 
 /// What a document is built from (used by the file formats).
@@ -529,9 +539,13 @@ impl Document {
                 ..Default::default()
             });
         }
-        let mut next_id = cels.keys().max().copied().unwrap_or(0).max(
-            layers.iter().map(|l| l.id).max().unwrap_or(0),
-        ) + 1;
+        let mut next_id = cels
+            .keys()
+            .max()
+            .copied()
+            .unwrap_or(0)
+            .max(layers.iter().map(|l| l.id).max().unwrap_or(0))
+            + 1;
         // Unique layer ids.
         let mut seen = std::collections::HashSet::new();
         for layer in &mut layers {
@@ -556,7 +570,10 @@ impl Document {
         }
         let ids: std::collections::HashSet<LayerId> = layers.iter().map(|l| l.id).collect();
         for layer in &mut layers {
-            if layer.parent.is_some_and(|p| !ids.contains(&p) || p == layer.id) {
+            if layer
+                .parent
+                .is_some_and(|p| !ids.contains(&p) || p == layer.id)
+            {
                 layer.parent = None;
             }
         }
@@ -580,6 +597,7 @@ impl Document {
             revision: 0,
             stroke: None,
             coalescing: false,
+            batching: 0,
         };
         doc.collect_garbage();
         doc
@@ -817,8 +835,11 @@ impl Document {
 
     /// Drops cels no layer refers to any more.
     fn collect_garbage(&mut self) {
-        let used: std::collections::HashSet<CelId> =
-            self.layers.iter().flat_map(|l| l.cels.iter().copied()).collect();
+        let used: std::collections::HashSet<CelId> = self
+            .layers
+            .iter()
+            .flat_map(|l| l.cels.iter().copied())
+            .collect();
         self.cels.retain(|id, _| used.contains(id));
     }
 
@@ -862,8 +883,8 @@ impl Document {
             if layer.parent != parent {
                 continue;
             }
-            let hidden = !layer.visible
-                || (layer.kind == LayerKind::Reference && !options.reference);
+            let hidden =
+                !layer.visible || (layer.kind == LayerKind::Reference && !options.reference);
             if hidden {
                 if !layer.clip {
                     clip_base = Some(Bitmap::new(self.width, self.height));
@@ -914,6 +935,9 @@ impl Document {
     fn push_undo(&mut self, edit: Edit) {
         self.redo.clear();
         self.revision += 1;
+        if self.batching > 0 {
+            return; // the batch records everything as one step
+        }
         if self.coalescing
             && let Some(key) = &edit.merge
             && let Some(last) = self.undo.last_mut()
@@ -953,7 +977,12 @@ impl Document {
     }
 
     /// Records the difference between each base and its cel as one undo step.
-    fn record_cels(&mut self, label: &str, bases: &[(CelId, Bitmap)], selection_before: Option<Mask>) {
+    fn record_cels(
+        &mut self,
+        label: &str,
+        bases: &[(CelId, Bitmap)],
+        selection_before: Option<Mask>,
+    ) {
         let mut patches = Vec::new();
         for (id, base) in bases {
             let Some(current) = self.cels.get(id) else {
@@ -1042,6 +1071,57 @@ impl Document {
         self.structural(label, |doc| edit(&mut doc.extras));
     }
 
+    /// Runs any number of edits (scripts, batch operations) as a single undo step.
+    pub fn batch(&mut self, label: &str, edit: impl FnOnce(&mut Self)) {
+        self.stroke_end();
+        self.commit_floating();
+        let before = self.state();
+        self.batching += 1;
+        edit(self);
+        self.stroke_end();
+        self.commit_floating();
+        self.batching -= 1;
+        self.collect_garbage();
+        self.active = self.active.min(self.layers.len() - 1);
+        self.current = self.current.min(self.frames.len() - 1);
+        let after = self.state();
+        if before != after {
+            self.push_undo(Edit {
+                label: label.to_owned(),
+                kind: EditKind::Structure {
+                    before: Box::new(before),
+                    after: Box::new(after),
+                },
+                merge: None,
+            });
+        }
+    }
+
+    /// The colour of a pixel of the active layer in the current frame.
+    pub fn get_pixel(&self, x: i32, y: i32) -> Option<Rgba> {
+        self.layer_pixels(self.active).get(x, y)
+    }
+
+    /// Sets one pixel of the active layer in the current frame (ignores locks; meant for
+    /// scripts, usually inside [`Self::batch`]).
+    pub fn set_pixel(&mut self, x: i32, y: i32, color: Rgba) {
+        let id = self.layers[self.active].cels[self.current];
+        let Some(cel) = self.cels.get_mut(&id) else {
+            return;
+        };
+        if cel.get(x, y).is_none_or(|c| c == color) {
+            return;
+        }
+        if self.batching > 0 {
+            cel.set(x, y, color);
+            self.revision += 1;
+        } else {
+            let base = cel.clone();
+            cel.set(x, y, color);
+            self.record_cels("Set pixel", &[(id, base)], self.selection.clone());
+        }
+    }
+
     // ---- layer properties ----
 
     /// Changes one layer's properties as one undo step. Calls with the same `merge` key in a
@@ -1083,7 +1163,9 @@ impl Document {
     }
 
     pub fn set_layer_opacity(&mut self, index: usize, opacity: f32) {
-        self.edit_layer(index, "Layer opacity", Some("opacity"), |l| l.opacity = opacity);
+        self.edit_layer(index, "Layer opacity", Some("opacity"), |l| {
+            l.opacity = opacity
+        });
     }
 
     pub fn set_layer_name(&mut self, index: usize, name: String) {
@@ -1171,13 +1253,24 @@ impl Document {
 
     /// Starts a tool interaction at a pixel. For [`ToolKind::Picker`] returns the picked colour
     /// and starts nothing.
-    pub fn stroke_begin(&mut self, tool: ToolKind, settings: &ToolSettings, at: (i32, i32)) -> Option<Rgba> {
+    pub fn stroke_begin(
+        &mut self,
+        tool: ToolKind,
+        settings: &ToolSettings,
+        at: (i32, i32),
+    ) -> Option<Rgba> {
         self.stroke_end();
         if tool == ToolKind::Picker {
             let image = if settings.pick_active_layer {
                 self.layer_image(self.active, self.current)
             } else {
-                self.render(self.current, RenderOptions { reference: true, solo: None })
+                self.render(
+                    self.current,
+                    RenderOptions {
+                        reference: true,
+                        solo: None,
+                    },
+                )
             };
             return image.get(at.0, at.1);
         }
@@ -1191,13 +1284,11 @@ impl Document {
         if paints && self.edit_blocker().is_some() {
             return None;
         }
-        if tool == ToolKind::Move {
-            if self.floating.is_none() {
-                if self.edit_blocker().is_some() {
-                    return None;
-                }
-                self.lift(false);
+        if tool == ToolKind::Move && self.floating.is_none() {
+            if self.edit_blocker().is_some() {
+                return None;
             }
+            self.lift(false);
         }
         if tool == ToolKind::MagicWand {
             let sample = self.sample_for(settings);
@@ -1207,7 +1298,11 @@ impl Document {
             }
             return None;
         }
-        let frames = if paints { self.edit_frames() } else { vec![self.current] };
+        let frames = if paints {
+            self.edit_frames()
+        } else {
+            vec![self.current]
+        };
         let mut targets: Vec<(CelId, Bitmap)> = Vec::new();
         for f in frames {
             let id = self.layers[self.active].cels[f];
@@ -1318,7 +1413,8 @@ impl Document {
             }
             ToolKind::Lasso => {
                 let mask = Mask::from_polygon(self.width, self.height, &stroke.path);
-                self.selection = Mask::combine(stroke.selection_before.as_ref(), mask, s.select_mode);
+                self.selection =
+                    Mask::combine(stroke.selection_before.as_ref(), mask, s.select_mode);
             }
             ToolKind::Move => {
                 if let (Some(f), Some(origin)) = (&mut self.floating, stroke.float_start) {
@@ -1351,7 +1447,10 @@ impl Document {
                     ToolKind::Line | ToolKind::Rectangle | ToolKind::Ellipse
                 ) || (s.pixel_perfect
                     && s.effective_size() == 1
-                    && matches!(tool, ToolKind::Pencil | ToolKind::Eraser | ToolKind::Shade | ToolKind::Dither));
+                    && matches!(
+                        tool,
+                        ToolKind::Pencil | ToolKind::Eraser | ToolKind::Shade | ToolKind::Dither
+                    ));
                 for (id, base) in &stroke.targets {
                     let Some(target) = self.cels.get_mut(id) else {
                         continue;
@@ -1369,7 +1468,10 @@ impl Document {
                         mode,
                     };
                     match tool {
-                        ToolKind::Pencil | ToolKind::Eraser | ToolKind::Shade | ToolKind::Dither => {
+                        ToolKind::Pencil
+                        | ToolKind::Eraser
+                        | ToolKind::Shade
+                        | ToolKind::Dither => {
                             if redraw {
                                 painter.path(&pixel_perfect(&stroke.path));
                             } else {
@@ -1418,20 +1520,28 @@ impl Document {
         };
         match stroke.tool {
             ToolKind::Select | ToolKind::Lasso => {
-                let plain_click = !stroke.moved && stroke.settings.select_mode == SelectMode::Replace;
+                let plain_click =
+                    !stroke.moved && stroke.settings.select_mode == SelectMode::Replace;
                 let after = if plain_click {
                     None // a plain click deselects
                 } else {
                     self.selection.take()
                 };
                 self.selection = stroke.selection_before;
-                let label = if stroke.tool == ToolKind::Lasso { "Lasso" } else { "Select" };
+                let label = if stroke.tool == ToolKind::Lasso {
+                    "Lasso"
+                } else {
+                    "Select"
+                };
                 self.set_selection_recorded(label, after);
             }
             ToolKind::Move => {
                 // Moving a whole layer (nothing was selected) puts it down straight away.
                 if stroke.selection_before.is_none()
-                    || self.floating.as_ref().is_some_and(|f| f.selection_before.is_none())
+                    || self
+                        .floating
+                        .as_ref()
+                        .is_some_and(|f| f.selection_before.is_none())
                 {
                     self.commit_floating();
                 }
@@ -1610,7 +1720,11 @@ impl Document {
                 for y in 0..f.image.height() as i32 {
                     for x in 0..f.image.width() as i32 {
                         if f.shape.get(x, y) {
-                            cel.set(f.pos.0 + x, f.pos.1 + y, f.image.get(x, y).unwrap_or(TRANSPARENT));
+                            cel.set(
+                                f.pos.0 + x,
+                                f.pos.1 + y,
+                                f.image.get(x, y).unwrap_or(TRANSPARENT),
+                            );
                         }
                     }
                 }
@@ -1801,7 +1915,11 @@ impl Document {
                 ((image.height() as f32 * scale).round() as u32).max(1),
             );
             let fitted = resample::nearest(image, w, h);
-            pixels.blit(&fitted, (doc.width - w) as i32 / 2, (doc.height - h) as i32 / 2);
+            pixels.blit(
+                &fitted,
+                (doc.width - w) as i32 / 2,
+                (doc.height - h) as i32 / 2,
+            );
             doc.insert_layer_above(name, LayerKind::Reference, Some(pixels));
             doc.layers[doc.active].opacity = 0.5;
             doc.layers[doc.active].locked = true;
@@ -1900,7 +2018,9 @@ impl Document {
             let sibling = if up {
                 (doc.active + 1..doc.layers.len()).find(|i| doc.layers[*i].parent == parent)
             } else {
-                (0..doc.active).rev().find(|i| doc.layers[*i].parent == parent)
+                (0..doc.active)
+                    .rev()
+                    .find(|i| doc.layers[*i].parent == parent)
             };
             if let Some(target) = sibling {
                 doc.layers.swap(doc.active, target);
@@ -2009,7 +2129,10 @@ impl Document {
     pub fn merge_down(&mut self) {
         self.structural("Merge down", |doc| {
             let parent = doc.layers[doc.active].parent;
-            let Some(below) = (0..doc.active).rev().find(|i| doc.layers[*i].parent == parent) else {
+            let Some(below) = (0..doc.active)
+                .rev()
+                .find(|i| doc.layers[*i].parent == parent)
+            else {
                 return;
             };
             let upper_kind = doc.layers[doc.active].kind;
@@ -2052,7 +2175,9 @@ impl Document {
     /// Replaces all visible layers with one layer holding their composite.
     pub fn merge_visible(&mut self) {
         self.structural("Merge visible", |doc| {
-            let frames: Vec<Bitmap> = (0..doc.frames.len()).map(|f| doc.flatten_frame(f)).collect();
+            let frames: Vec<Bitmap> = (0..doc.frames.len())
+                .map(|f| doc.flatten_frame(f))
+                .collect();
             let cels = doc.share_identical(frames);
             let id = doc.new_id();
             let keep: Vec<Layer> = doc
@@ -2087,7 +2212,9 @@ impl Document {
     /// Replaces every layer with a single one holding the composite.
     pub fn flatten_layers(&mut self) {
         self.structural("Flatten", |doc| {
-            let frames: Vec<Bitmap> = (0..doc.frames.len()).map(|f| doc.flatten_frame(f)).collect();
+            let frames: Vec<Bitmap> = (0..doc.frames.len())
+                .map(|f| doc.flatten_frame(f))
+                .collect();
             let cels = doc.share_identical(frames);
             let id = doc.new_id();
             doc.layers = vec![Layer {
@@ -2105,9 +2232,15 @@ impl Document {
         if self.selection.is_none() || self.edit_blocker().is_some() {
             return;
         }
-        let label = if cut { "Layer via cut" } else { "Layer via copy" };
+        let label = if cut {
+            "Layer via cut"
+        } else {
+            "Layer via copy"
+        };
         self.structural(label, |doc| {
-            let Some(mask) = doc.selection.clone() else { return };
+            let Some(mask) = doc.selection.clone() else {
+                return;
+            };
             let source = doc.active;
             let mut new_cels = Vec::new();
             for f in 0..doc.frames.len() {
@@ -2267,15 +2400,16 @@ impl Document {
         }
         self.structural("Link cels", |doc| {
             let id = doc.layers[layer].cels[from];
-            for f in from + 1..=to {
-                doc.layers[layer].cels[f] = id;
+            for cel in &mut doc.layers[layer].cels[from + 1..=to] {
+                *cel = id;
             }
         });
     }
 
     /// Gives a linked cel its own copy of the pixels.
     pub fn unlink_cel(&mut self, layer: usize, frame: usize) {
-        if layer >= self.layers.len() || frame >= self.frames.len() || !self.is_linked(layer, frame) {
+        if layer >= self.layers.len() || frame >= self.frames.len() || !self.is_linked(layer, frame)
+        {
             return;
         }
         self.structural("Unlink cel", |doc| {
@@ -2337,7 +2471,14 @@ impl Document {
         }
         let dx = ((width as f32 - self.width as f32) * anchor.0).round() as i32;
         let dy = ((height as f32 - self.height as f32) * anchor.1).round() as i32;
-        self.reframe("Resize canvas", width, height, |b| b.resized_offset(width, height, dx, dy), dx, dy);
+        self.reframe(
+            "Resize canvas",
+            width,
+            height,
+            |b| b.resized_offset(width, height, dx, dy),
+            dx,
+            dy,
+        );
     }
 
     /// Applies a size-changing operation to every cel, moving the selection and guides along.
@@ -2391,7 +2532,10 @@ impl Document {
                 g.position = (g.position as f32 * if g.vertical { sx } else { sy }).round() as i32;
             }
             if let Some(p) = &mut doc.extras.pivot {
-                *p = ((p.0 as f32 * sx).round() as i32, (p.1 as f32 * sy).round() as i32);
+                *p = (
+                    (p.0 as f32 * sx).round() as i32,
+                    (p.1 as f32 * sy).round() as i32,
+                );
             }
             doc.width = width;
             doc.height = height;
@@ -2449,7 +2593,11 @@ impl Document {
     pub fn transform_canvas(&mut self, t: Transform) {
         let (w, h) = match t {
             Transform::Rotate90 { .. } => (self.height, self.width),
-            Transform::Scale { width, height, method } => {
+            Transform::Scale {
+                width,
+                height,
+                method,
+            } => {
                 self.scale_image(width, height, method);
                 return;
             }
@@ -2484,9 +2632,18 @@ impl Document {
             Transform::Rotate90 { clockwise } if w != h => {
                 resample::rotate(b, if clockwise { 90.0 } else { -90.0 }, false)
             }
-            Transform::Scale { width, height, method } => {
+            Transform::Scale {
+                width,
+                height,
+                method,
+            } => {
                 let scaled = resample::scale(b, width, height, method);
-                scaled.resized_offset(w, h, (w as i32 - width as i32) / 2, (h as i32 - height as i32) / 2)
+                scaled.resized_offset(
+                    w,
+                    h,
+                    (w as i32 - width as i32) / 2,
+                    (h as i32 - height as i32) / 2,
+                )
             }
             _ => t.apply(b),
         });
@@ -2596,12 +2753,20 @@ impl Document {
             } => {
                 if let Some(layer) = self.layers.get_mut(*index) {
                     let cels = layer.cels.clone();
-                    *layer = if backwards { (**before).clone() } else { (**after).clone() };
+                    *layer = if backwards {
+                        (**before).clone()
+                    } else {
+                        (**after).clone()
+                    };
                     layer.cels = cels;
                 }
             }
             EditKind::Selection { before, after } => {
-                self.selection = if backwards { before.clone() } else { after.clone() };
+                self.selection = if backwards {
+                    before.clone()
+                } else {
+                    after.clone()
+                };
             }
         }
     }

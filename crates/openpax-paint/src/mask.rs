@@ -11,7 +11,9 @@ pub struct Mask {
 }
 
 /// How a new selection combines with the existing one.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum SelectMode {
     #[default]
     Replace,

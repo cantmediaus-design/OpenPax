@@ -48,7 +48,10 @@ pub fn nearest(src: &Bitmap, width: u32, height: u32) -> Bitmap {
 pub fn scale2x(src: &Bitmap) -> Bitmap {
     let (w, h) = (src.width() as i32, src.height() as i32);
     let mut out = Bitmap::new(src.width() * 2, src.height() * 2);
-    let at = |x: i32, y: i32| src.get(x.clamp(0, w - 1), y.clamp(0, h - 1)).unwrap_or(TRANSPARENT);
+    let at = |x: i32, y: i32| {
+        src.get(x.clamp(0, w - 1), y.clamp(0, h - 1))
+            .unwrap_or(TRANSPARENT)
+    };
     for y in 0..h {
         for x in 0..w {
             let p = at(x, y);
@@ -79,7 +82,10 @@ pub fn scale2x(src: &Bitmap) -> Bitmap {
 pub fn scale3x(src: &Bitmap) -> Bitmap {
     let (w, h) = (src.width() as i32, src.height() as i32);
     let mut out = Bitmap::new(src.width() * 3, src.height() * 3);
-    let at = |x: i32, y: i32| src.get(x.clamp(0, w - 1), y.clamp(0, h - 1)).unwrap_or(TRANSPARENT);
+    let at = |x: i32, y: i32| {
+        src.get(x.clamp(0, w - 1), y.clamp(0, h - 1))
+            .unwrap_or(TRANSPARENT)
+    };
     for y in 0..h {
         for x in 0..w {
             let (a, b, c) = (at(x - 1, y - 1), at(x, y - 1), at(x + 1, y - 1));
@@ -88,13 +94,29 @@ pub fn scale3x(src: &Bitmap) -> Bitmap {
             let mut o = [e; 9];
             if b != hh && d != f {
                 o[0] = if d == b { d } else { e };
-                o[1] = if (d == b && e != c) || (b == f && e != a) { b } else { e };
+                o[1] = if (d == b && e != c) || (b == f && e != a) {
+                    b
+                } else {
+                    e
+                };
                 o[2] = if b == f { f } else { e };
-                o[3] = if (d == b && e != g) || (d == hh && e != a) { d } else { e };
+                o[3] = if (d == b && e != g) || (d == hh && e != a) {
+                    d
+                } else {
+                    e
+                };
                 o[4] = e;
-                o[5] = if (b == f && e != i) || (hh == f && e != c) { f } else { e };
+                o[5] = if (b == f && e != i) || (hh == f && e != c) {
+                    f
+                } else {
+                    e
+                };
                 o[6] = if d == hh { d } else { e };
-                o[7] = if (d == hh && e != i) || (hh == f && e != g) { hh } else { e };
+                o[7] = if (d == hh && e != i) || (hh == f && e != g) {
+                    hh
+                } else {
+                    e
+                };
                 o[8] = if hh == f { f } else { e };
             }
             for (k, color) in o.iter().enumerate() {
@@ -117,7 +139,11 @@ pub fn scale(src: &Bitmap, width: u32, height: u32, method: ScaleMethod) -> Bitm
             // Grow with Scale2x/3x while that does not overshoot, then finish with nearest.
             loop {
                 let (w, h) = (img.width(), img.height());
-                if w * 3 <= width && h * 3 <= height && width % (w * 3) == 0 && height % (h * 3) == 0 {
+                if w * 3 <= width
+                    && h * 3 <= height
+                    && width.is_multiple_of(w * 3)
+                    && height.is_multiple_of(h * 3)
+                {
                     img = scale3x(&img);
                 } else if w * 2 <= width && h * 2 <= height {
                     img = scale2x(&img);

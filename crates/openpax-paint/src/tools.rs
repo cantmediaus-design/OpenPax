@@ -258,7 +258,10 @@ impl ToolSettings {
                 let start = -(size / 2);
                 for y in start..start + size {
                     for x in start..start + size {
-                        let (fx, fy) = (f64::from(x - start) + 0.5 - r, f64::from(y - start) + 0.5 - r);
+                        let (fx, fy) = (
+                            f64::from(x - start) + 0.5 - r,
+                            f64::from(y - start) + 0.5 - r,
+                        );
                         if fx * fx + fy * fy <= r * r + 0.25 {
                             out.push((x, y, None));
                         }
@@ -352,7 +355,12 @@ impl Painter<'_> {
             color[3] = before[3];
         }
         if self.settings.pressure_opacity && self.settings.pressure < 1.0 && color[3] != 0 {
-            let src = [color[0], color[1], color[2], (f32::from(color[3]) * self.settings.pressure.max(0.0)) as u8];
+            let src = [
+                color[0],
+                color[1],
+                color[2],
+                (f32::from(color[3]) * self.settings.pressure.max(0.0)) as u8,
+            ];
             color = crate::blend::blend_pixel(before, src, crate::BlendMode::Normal, 1.0);
         }
         self.target.set(x, y, color);
@@ -370,7 +378,12 @@ impl Painter<'_> {
         let reflect_y = |p: (i32, i32)| (p.0, (2.0 * cy - p.1 as f32 - 1.0).round() as i32);
         // Pixel centre relative to the symmetry centre.
         let rel = |p: (i32, i32)| (p.0 as f32 + 0.5 - cx, p.1 as f32 + 0.5 - cy);
-        let abs = |v: (f32, f32)| ((cx + v.0 - 0.5).round() as i32, (cy + v.1 - 0.5).round() as i32);
+        let abs = |v: (f32, f32)| {
+            (
+                (cx + v.0 - 0.5).round() as i32,
+                (cy + v.1 - 0.5).round() as i32,
+            )
+        };
         if mirror_x {
             let more: Vec<_> = points.iter().map(|p| reflect_x(*p)).collect();
             points.extend(more);
@@ -552,13 +565,19 @@ pub fn region_mask(sample: &Bitmap, x: i32, y: i32, settings: &ToolSettings) -> 
     let tol = settings.tolerance;
     if !settings.fill_contiguous {
         return Some(Mask::from_fn(w, h, |px, py| {
-            sample.get(px, py).is_some_and(|c| colors_match(c, target, tol))
+            sample
+                .get(px, py)
+                .is_some_and(|c| colors_match(c, target, tol))
         }));
     }
     let mut mask = Mask::new(w, h);
     let mut stack = vec![(x, y)];
     while let Some((px, py)) = stack.pop() {
-        if mask.get(px, py) || !sample.get(px, py).is_some_and(|c| colors_match(c, target, tol)) {
+        if mask.get(px, py)
+            || !sample
+                .get(px, py)
+                .is_some_and(|c| colors_match(c, target, tol))
+        {
             continue;
         }
         mask.set(px, py, true);
@@ -587,7 +606,11 @@ mod tests {
             ..Default::default()
         };
         let offsets = s.brush_offsets();
-        assert!(offsets.len() < 25 && offsets.len() >= 13, "{}", offsets.len());
+        assert!(
+            offsets.len() < 25 && offsets.len() >= 13,
+            "{}",
+            offsets.len()
+        );
         assert!(!offsets.iter().any(|(x, y, _)| (*x, *y) == (-2, -2)));
     }
 
