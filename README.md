@@ -15,8 +15,12 @@ building models and animating them. It is early software; see the roadmap for wh
   canvas resize and flip, pixel grid and tiling preview.
 - **Texture animation**: edit the `.mcmeta` animation settings, add or remove frames, and watch
   a live preview at game speed.
-- **Everything else** (models, blockstates, language files, ...) opens in a text editor with
-  JSON validation.
+- **3D model editor** (early): block/item models open in a wgpu viewport with the pack's own
+  textures. Orbit, pan and zoom; click to select an element; add, duplicate and delete cubes;
+  edit position, size, rotation, per-face texture, UV and texture rotation; manage texture
+  variables; undo/redo. Right-click a model in the explorer to open it as text instead.
+- **Everything else** (blockstates, language files, ...) opens in a text editor with JSON
+  validation.
 
 OpenPax never rewrites files you did not change, and keeps JSON fields it does not understand.
 Layers are stored in a `.openpax` folder inside the pack; the PNG Minecraft reads stays a normal
@@ -24,7 +28,8 @@ flattened image, and `.openpax` is left out of exported zips.
 
 ## Roadmap
 
-1. **3D modelling**: cuboid model editor with a wgpu viewport, UV editing, painting on the model.
+1. **3D modelling, continued**: move/scale/rotate gizmos in the viewport, a visual UV editor,
+   painting directly on the model, parent model resolution, display-transform previews.
 2. **Animation**: timeline, display-transform poser, keyframed rigs.
 3. **Pack tooling**: validation, blockstate / item definition / language / sound / font editors,
    multi-version overlays.
@@ -86,9 +91,12 @@ rustflags = ["-Clinker-flavor=ld.lld", "-Clink-self-contained=yes", "-Clink-arg=
 | --- | --- |
 | `crates/openpax-core` | Pack model: `pack.mcmeta`, asset index, texture metadata, zip import/export. No UI. |
 | `crates/openpax-paint` | Pixel-art engine: bitmaps, layers, tools, undo history, PNG I/O. No UI. |
+| `crates/openpax-model` | Block/item model JSON, undoable model document, mesh generation, ray picking. No UI. |
+| `crates/openpax-render` | wgpu renderer for the 3D viewport: orbit camera, textured quads, line overlays. |
 | `crates/openpax-app` | The `openpax` desktop app (egui + wgpu). |
 
-The library crates are headless on purpose, so editing logic can be unit tested without a window.
+The core, paint and model crates are headless on purpose, so editing logic can be unit tested
+without a window.
 
 ## Licence
 

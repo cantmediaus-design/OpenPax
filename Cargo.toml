@@ -1,4 +1,4 @@
-﻿[workspace]
+[workspace]
 resolver = "3"
 members = ["crates/*"]
 
@@ -11,6 +11,8 @@ repository = "https://github.com/openpax/openpax"
 [workspace.dependencies]
 openpax-core = { path = "crates/openpax-core" }
 openpax-paint = { path = "crates/openpax-paint" }
+openpax-model = { path = "crates/openpax-model" }
+openpax-render = { path = "crates/openpax-render" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
@@ -18,6 +20,8 @@ thiserror = "2"
 image = { version = "0.25", default-features = false, features = ["png"] }
 zip = { version = "9", default-features = false, features = ["deflate"] }
 tempfile = "3"
+glam = "0.34"
+wgpu = "30"
 
 eframe = { version = "0.37", features = ["persistence"] }
 egui_dock = "0.22"

@@ -106,6 +106,8 @@ pub struct Explorer<'a> {
     pub active: Option<&'a str>,
     /// Set to the asset the user clicked.
     pub open: Option<String>,
+    /// Set when the user asks for the plain text editor instead of the dedicated one.
+    pub open_text: Option<String>,
 }
 
 impl Explorer<'_> {
@@ -176,6 +178,13 @@ impl Explorer<'_> {
                 .on_hover_text(&entry.rel_path);
             if response.clicked() {
                 self.open = Some(entry.rel_path.clone());
+            }
+            if entry.kind.is_text() {
+                response.context_menu(|ui| {
+                    if ui.button("Open as Text").clicked() {
+                        self.open_text = Some(entry.rel_path.clone());
+                    }
+                });
             }
         });
     }

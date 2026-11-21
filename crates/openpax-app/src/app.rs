@@ -12,6 +12,7 @@ use openpax_paint::ToolKind;
 use crate::dialogs::Dialog;
 use crate::editor::{Editor, TextEditor, TextureEditor, ToolState};
 use crate::explorer::{Explorer, Thumbnails, Tree};
+use crate::model_editor::ModelEditor;
 
 const RECENT_KEY: &str = "recent_packs";
 const MAX_RECENT: usize = 8;
@@ -44,6 +45,10 @@ pub struct App {
     pub(crate) dialog: Dialog,
     pub(crate) status: String,
     pub(crate) allow_quit: bool,
+    /// GPU handles for the 3D viewport; `None` if eframe is not running on wgpu.
+    render_state: Option<eframe::egui_wgpu::RenderState>,
+    /// Bumped on every save so viewports reload textures edited in other tabs.
+    asset_generation: u64,
 }
 
 /// The texture editor in the active tab, if that tab is a texture.
@@ -53,7 +58,18 @@ pub(crate) fn texture_mut(
 ) -> Option<&mut TextureEditor> {
     match editors.get_mut(&active?)? {
         Editor::Texture(editor) => Some(editor),
-        Editor::Text(_) => None,
+        _ => None,
+    }
+}
+
+/// The model editor in the active tab, if that tab is a model.
+pub(crate) fn model_mut(
+    editors: &mut HashMap<u64, Editor>,
+    active: Option<u64>,
+) -> Option<&mut ModelEditor> {
+    match editors.get_mut(&active?)? {
+        Editor::Model(editor) => Some(editor),
+        _ => None,
     }
 }
 
@@ -93,6 +109,8 @@ impl App {
             dialog: Dialog::None,
             status: "Ready".to_owned(),
             allow_quit: false,
+            render_state: cc.wgpu_render_state.clone(),
+            asset_generation: 0,
         };
         // Open the pack given on the command line, else the last one if it is still there.
         if let Some(root) = initial_pack {
@@ -235,6 +253,11 @@ impl App {
     // ---- editors ----
 
     pub(crate) fn open_asset(&mut self, rel_path: &str) {
+        self.open_asset_as(rel_path, false);
+    }
+
+    /// Opens an asset in its dedicated editor, or in the text editor when `as_text` is set.
+    pub(crate) fn open_asset_as(&mut self, rel_path: &str, as_text: bool) {
         if let Some((&id, _)) = self.editors.iter().find(|(_, e)| e.rel_path() == rel_path) {
             if let Some(path) = self.dock.find_tab(&id) {
                 let _ = self.dock.set_active_tab(path);
@@ -254,6 +277,13 @@ impl App {
             Some(AssetKind::Texture) => {
                 TextureEditor::open(pack, rel_path).map(|e| Editor::Texture(Box::new(e)))
             }
+            Some(AssetKind::Model) if !as_text => match ModelEditor::open(pack, rel_path) {
+                Ok(editor) => Ok(Editor::Model(Box::new(editor))),
+                Err(e) => {
+                    self.status = format!("Opened as text; not a model OpenPax can read: {e}");
+                    TextEditor::open(pack, rel_path).map(Editor::Text)
+                }
+            },
             Some(kind) if kind.is_text() => TextEditor::open(pack, rel_path).map(Editor::Text),
             _ => Err("OpenPax has no editor for this file type yet.".to_owned()),
         };
@@ -278,6 +308,7 @@ impl App {
         match editor.save(pack) {
             Ok(()) => {
                 self.thumbs.invalidate(&rel_path);
+                self.asset_generation += 1;
                 self.status = format!("Saved {rel_path}");
                 self.rescan();
                 true
@@ -317,6 +348,22 @@ impl App {
             self.save_editor(id);
         }
         if ctx.text_edit_focused() || !matches!(self.dialog, Dialog::None) {
+            return;
+        }
+        if let Some(editor) = model_mut(&mut self.editors, self.active) {
+            ctx.input_mut(|i| {
+                if i.consume_shortcut(&cmd_shift(Key::Z)) || i.consume_shortcut(&cmd(Key::Y)) {
+                    editor.doc.redo();
+                } else if i.consume_shortcut(&cmd(Key::Z)) {
+                    editor.doc.undo();
+                }
+                if i.consume_shortcut(&cmd(Key::D)) {
+                    editor.doc.duplicate_selected();
+                }
+                if i.key_pressed(Key::Delete) {
+                    editor.doc.remove_selected();
+                }
+            });
             return;
         }
         let Some(editor) = texture_mut(&mut self.editors, self.active) else {
@@ -395,6 +442,9 @@ impl App {
                 if item(ui, has_pack, "New Texture…", "") {
                     self.dialog = Dialog::new_texture();
                 }
+                if item(ui, has_pack, "New Model…", "") {
+                    self.dialog = Dialog::new_model();
+                }
                 if item(ui, has_editor, "Save", "Ctrl+S")
                     && let Some(id) = self.active
                 {
@@ -418,12 +468,21 @@ impl App {
             });
 
             ui.menu_button("Edit", |ui| {
-                let editor = texture_mut(&mut self.editors, self.active);
-                let (can_undo, can_redo) = editor
+                let active = self.active.and_then(|id| self.editors.get_mut(&id));
+                let (can_undo, can_redo) = active
                     .as_ref()
-                    .map_or((false, false), |e| (e.doc.can_undo(), e.doc.can_redo()));
+                    .map_or((false, false), |e| e.can_undo_redo());
                 let undo = item(ui, can_undo, "Undo", "Ctrl+Z");
                 let redo = item(ui, can_redo, "Redo", "Ctrl+Y");
+                if let Some(active) = active {
+                    if undo {
+                        active.undo();
+                    }
+                    if redo {
+                        active.redo();
+                    }
+                }
+                let editor = texture_mut(&mut self.editors, self.active);
                 ui.separator();
                 let select_all = item(ui, has_texture, "Select All", "Ctrl+A");
                 let deselect = item(ui, has_texture, "Deselect", "Ctrl+D");
@@ -434,12 +493,6 @@ impl App {
                 let resize = item(ui, has_texture, "Resize Canvas…", "");
                 if let Some(editor) = editor {
                     let doc = &mut editor.doc;
-                    if undo {
-                        doc.undo();
-                    }
-                    if redo {
-                        doc.redo();
-                    }
                     if select_all {
                         doc.select_all();
                     }
@@ -473,9 +526,17 @@ impl App {
                             editor.fit_pending = true;
                         }
                     }
-                    None => {
-                        ui.weak("Open a texture to see view options");
-                    }
+                    None => match model_mut(&mut self.editors, self.active) {
+                        Some(editor) => {
+                            ui.checkbox(&mut editor.show_grid, "Grid and Block Outline");
+                            if ui.button("Reset View").clicked() {
+                                editor.reset_view();
+                            }
+                        }
+                        None => {
+                            ui.weak("Open a texture or model to see view options");
+                        }
+                    },
                 }
             });
         });
@@ -495,6 +556,13 @@ impl App {
                         editor.doc.width(),
                         editor.doc.height(),
                         editor.zoom * 100.0
+                    ));
+                } else if let Some(editor) = model_mut(&mut self.editors, self.active) {
+                    let model = editor.doc.model();
+                    ui.monospace(format!(
+                        "{} elements   {} textures",
+                        model.elements().len(),
+                        model.textures.len()
                     ));
                 }
             });
@@ -524,12 +592,17 @@ impl App {
             thumbs: &mut self.thumbs,
             active,
             open: None,
+            open_text: None,
         };
         egui::ScrollArea::both()
             .auto_shrink(false)
             .show(ui, |ui| explorer.show(ui, &self.tree, &self.search));
-        if let Some(rel_path) = explorer.open {
+        let (open, open_text) = (explorer.open, explorer.open_text);
+        if let Some(rel_path) = open {
             self.open_asset(&rel_path);
+        }
+        if let Some(rel_path) = open_text {
+            self.open_asset_as(&rel_path, true);
         }
     }
 
@@ -573,8 +646,12 @@ impl App {
             return;
         }
 
+        let Some(pack) = &self.pack else { return };
         let mut close_requests = Vec::new();
         let mut viewer = Viewer {
+            pack,
+            render_state: self.render_state.as_ref(),
+            asset_generation: self.asset_generation,
             editors: &mut self.editors,
             tools: &mut self.tools,
             checker: &self.checker,
@@ -634,6 +711,9 @@ impl eframe::App for App {
 }
 
 struct Viewer<'a> {
+    pack: &'a Pack,
+    render_state: Option<&'a eframe::egui_wgpu::RenderState>,
+    asset_generation: u64,
     editors: &'a mut HashMap<u64, Editor>,
     tools: &'a mut ToolState,
     checker: &'a TextureHandle,
@@ -658,6 +738,9 @@ impl TabViewer for Viewer<'_> {
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut u64) {
         match self.editors.get_mut(tab) {
             Some(Editor::Texture(editor)) => editor.ui(ui, self.tools, self.checker),
+            Some(Editor::Model(editor)) => {
+                editor.ui(ui, self.pack, self.render_state, self.asset_generation);
+            }
             Some(Editor::Text(editor)) => editor.ui(ui),
             None => {}
         }

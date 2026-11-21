@@ -2,6 +2,7 @@
 
 use eframe::egui;
 use openpax_core::{Pack, RESOURCE_FORMATS, ResourceLocation, version_for_format};
+use openpax_model::{Element, ModelFile};
 use openpax_paint::Bitmap;
 
 use crate::app::{App, texture_mut};
@@ -24,6 +25,10 @@ pub enum Dialog {
         width: u32,
         height: u32,
     },
+    NewModel {
+        namespace: String,
+        path: String,
+    },
     Resize {
         width: u32,
         height: u32,
@@ -41,6 +46,13 @@ impl Dialog {
             name: "my_pack".to_owned(),
             description: "Made with OpenPax".to_owned(),
             format: RESOURCE_FORMATS[0].1,
+        }
+    }
+
+    pub fn new_model() -> Self {
+        Self::NewModel {
+            namespace: "minecraft".to_owned(),
+            path: "block/my_model".to_owned(),
         }
     }
 
@@ -100,6 +112,7 @@ impl App {
                     width,
                     height,
                 } => self.new_texture_dialog(ui, namespace, path, width, height),
+                Dialog::NewModel { namespace, path } => self.new_model_dialog(ui, namespace, path),
                 Dialog::Resize { width, height } => self.resize_dialog(ui, width, height),
                 Dialog::ConfirmClose { ids, quit } => self.confirm_close_dialog(ui, ids, *quit),
             };
@@ -221,6 +234,67 @@ impl App {
                 self.open_asset(rel_path);
             }
             Err(e) => self.message(format!("Could not create texture:\n{e}")),
+        }
+    }
+
+    fn new_model_dialog(
+        &mut self,
+        ui: &mut egui::Ui,
+        namespace: &mut String,
+        path: &mut String,
+    ) -> bool {
+        ui.heading("New Model");
+        egui::Grid::new("new_model").num_columns(2).show(ui, |ui| {
+            ui.label("Namespace");
+            ui.text_edit_singleline(namespace);
+            ui.end_row();
+            ui.label("Path");
+            ui.text_edit_singleline(path);
+            ui.end_row();
+        });
+        let location = ResourceLocation::new(namespace, path);
+        let rel_path = format!("assets/{namespace}/models/{path}.json");
+        match &location {
+            Ok(_) => ui.weak(&rel_path),
+            Err(_) => ui.colored_label(
+                ui.visuals().warn_fg_color,
+                "Use lowercase letters, digits, _ - . and / only.",
+            ),
+        };
+        ui.weak("Starts as one full-block cube using texture variable #0.");
+        ui.add_space(8.0);
+        let mut done = false;
+        ui.horizontal(|ui| {
+            if ui
+                .add_enabled(location.is_ok(), egui::Button::new("Create"))
+                .clicked()
+            {
+                self.create_model(&rel_path);
+                done = true;
+            }
+            done |= ui.button("Cancel").clicked();
+        });
+        done
+    }
+
+    fn create_model(&mut self, rel_path: &str) {
+        let Some(pack) = &self.pack else { return };
+        if pack.exists(rel_path) {
+            self.message(format!("{rel_path} already exists."));
+            return;
+        }
+        let mut model = ModelFile::default();
+        model
+            .textures
+            .insert("0".into(), "minecraft:block/stone".into());
+        model.textures.insert("particle".into(), "#0".into());
+        model.elements = Some(vec![Element::cube([0.0; 3], [16.0; 3], "#0")]);
+        match pack.write(rel_path, model.to_json().as_bytes()) {
+            Ok(()) => {
+                self.rescan();
+                self.open_asset(rel_path);
+            }
+            Err(e) => self.message(format!("Could not create model:\n{e}")),
         }
     }
 

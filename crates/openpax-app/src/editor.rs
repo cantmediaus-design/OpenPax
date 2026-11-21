@@ -7,6 +7,8 @@ use eframe::egui::{
 use openpax_core::{Pack, TextureMeta};
 use openpax_paint::{Document, Palette, ToolKind, ToolSettings};
 
+use crate::model_editor::ModelEditor;
+
 const MIN_ZOOM: f32 = 0.25;
 const MAX_ZOOM: f32 = 128.0;
 const LAYERS_JSON: &str = ".layers.json";
@@ -31,6 +33,7 @@ impl Default for ToolState {
 
 pub enum Editor {
     Texture(Box<TextureEditor>),
+    Model(Box<ModelEditor>),
     Text(TextEditor),
 }
 
@@ -38,6 +41,7 @@ impl Editor {
     pub fn rel_path(&self) -> &str {
         match self {
             Self::Texture(e) => &e.rel_path,
+            Self::Model(e) => &e.rel_path,
             Self::Text(e) => &e.rel_path,
         }
     }
@@ -45,6 +49,7 @@ impl Editor {
     pub fn dirty(&self) -> bool {
         match self {
             Self::Texture(e) => e.dirty(),
+            Self::Model(e) => e.dirty(),
             Self::Text(e) => e.dirty(),
         }
     }
@@ -61,7 +66,33 @@ impl Editor {
     pub fn save(&mut self, pack: &Pack) -> Result<(), String> {
         match self {
             Self::Texture(e) => e.save(pack),
+            Self::Model(e) => e.save(pack),
             Self::Text(e) => e.save(pack),
+        }
+    }
+
+    /// Whether the editor's own history can undo / redo (text tabs use the text box's).
+    pub fn can_undo_redo(&self) -> (bool, bool) {
+        match self {
+            Self::Texture(e) => (e.doc.can_undo(), e.doc.can_redo()),
+            Self::Model(e) => (e.doc.can_undo(), e.doc.can_redo()),
+            Self::Text(_) => (false, false),
+        }
+    }
+
+    pub fn undo(&mut self) {
+        match self {
+            Self::Texture(e) => drop(e.doc.undo()),
+            Self::Model(e) => drop(e.doc.undo()),
+            Self::Text(_) => {}
+        }
+    }
+
+    pub fn redo(&mut self) {
+        match self {
+            Self::Texture(e) => drop(e.doc.redo()),
+            Self::Model(e) => drop(e.doc.redo()),
+            Self::Text(_) => {}
         }
     }
 }

@@ -1,0 +1,15 @@
+[package]
+name = "openpax-model"
+description = "Headless Minecraft: Java Edition block/item model document, geometry and picking for OpenPax"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+glam.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

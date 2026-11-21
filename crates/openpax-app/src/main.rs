@@ -4,6 +4,8 @@ mod app;
 mod dialogs;
 mod editor;
 mod explorer;
+mod model_editor;
+mod model_panels;
 mod panels;
 
 use eframe::egui;

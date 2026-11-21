@@ -7,6 +7,7 @@ use openpax_core::{Animation, version_for_format};
 use openpax_paint::Palette;
 
 use crate::app::{App, TOOL_KEYS, texture_mut};
+use crate::editor::Editor;
 
 const SWATCH: f32 = 18.0;
 const PREVIEW: f32 = 96.0;
@@ -17,10 +18,15 @@ impl App {
         egui::ScrollArea::vertical()
             .auto_shrink(false)
             .show(ui, |ui| {
-                section(ui, "Tools", |ui| self.tools_section(ui));
-                section(ui, "Palette", |ui| self.palette_section(ui));
-                section(ui, "Layers", |ui| self.layers_section(ui));
-                section(ui, "Texture", |ui| self.texture_section(ui));
+                let active = self.active.and_then(|id| self.editors.get(&id));
+                if matches!(active, Some(Editor::Model(_))) {
+                    self.model_sections(ui);
+                } else {
+                    section(ui, "Tools", |ui| self.tools_section(ui));
+                    section(ui, "Palette", |ui| self.palette_section(ui));
+                    section(ui, "Layers", |ui| self.layers_section(ui));
+                    section(ui, "Texture", |ui| self.texture_section(ui));
+                }
                 section(ui, "Pack", |ui| self.pack_section(ui));
             });
     }
