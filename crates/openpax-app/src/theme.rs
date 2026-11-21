@@ -13,8 +13,13 @@ pub const SPACE_L: f32 = 12.0;
 pub const SPACE_XL: f32 = 16.0;
 pub const SPACE_XXL: f32 = 24.0;
 
-pub const RADIUS: u8 = 4;
-pub const RADIUS_L: u8 = 6;
+pub const RADIUS: u8 = 6;
+pub const RADIUS_L: u8 = 10;
+
+/// How far a control grows while hovered, so it lifts under the pointer.
+const HOVER_EXPANSION: f32 = 1.0;
+/// How far a control shrinks while pressed, so a click feels like a squish.
+const PRESS_EXPANSION: f32 = -0.5;
 
 /// Height of list rows (explorer, layers, elements).
 pub const ROW_HEIGHT: f32 = 24.0;
@@ -278,14 +283,14 @@ fn build(mut v: Visuals, tokens: &Tokens, base: &Base) -> Visuals {
     w.hovered.bg_stroke = Stroke::new(1.0, base.border_strong);
     w.hovered.fg_stroke = Stroke::new(1.0, base.text_strong);
     w.hovered.corner_radius = radius;
-    w.hovered.expansion = 0.0;
+    w.hovered.expansion = HOVER_EXPANSION;
 
     w.active.bg_fill = base.control_active;
     w.active.weak_bg_fill = base.control_active;
-    w.active.bg_stroke = Stroke::new(1.0, tokens.accent);
+    w.active.bg_stroke = Stroke::new(1.5, tokens.accent);
     w.active.fg_stroke = Stroke::new(1.0, base.text_strong);
     w.active.corner_radius = radius;
-    w.active.expansion = 0.0;
+    w.active.expansion = PRESS_EXPANSION;
 
     w.open.bg_fill = base.control_hover;
     w.open.weak_bg_fill = base.control_hover;

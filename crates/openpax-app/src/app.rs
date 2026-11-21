@@ -24,6 +24,8 @@ use crate::{clipboard, icons, widgets};
 
 const RECENT_KEY: &str = "recent_packs";
 const MAX_RECENT: usize = 8;
+/// The pack's icon in Minecraft's pack list, next to `pack.mcmeta`.
+pub(crate) const PACK_ICON: &str = "pack.png";
 /// Seconds before the status bar message dims.
 const STATUS_FRESH: f64 = 6.0;
 
@@ -43,6 +45,7 @@ pub struct App {
     pub(crate) thumbs: Thumbnails,
     search: String,
     focus_search: bool,
+    explorer_filter: explorer::Filter,
     dock: DockState<u64>,
     pub(crate) editors: HashMap<u64, Editor>,
     next_id: u64,
@@ -60,8 +63,17 @@ pub struct App {
     pub(crate) palette: Option<PaletteState>,
     /// Open tabs of recently used packs, restored when a pack is opened again.
     sessions: Vec<PackSession>,
+    /// Assets deleted this session, newest last: `(trash folder, original path)`.
+    pub(crate) trashed: Vec<(String, String)>,
+    /// Crash-recovery snapshots of unsaved edits.
+    pub(crate) recovery: crate::recovery::Recovery,
+    /// The step of the guided tour being shown.
+    pub(crate) tour: Option<usize>,
+    /// Where the panels were drawn this frame, for the tour.
+    pub(crate) layout: crate::tour::Layout,
     status: Status,
     toasts: Toasts,
+    confetti: crate::confetti::Confetti,
     pub(crate) allow_quit: bool,
     title_stale: bool,
     /// GPU handles for the 3D viewport; `None` if eframe is not running on wgpu.
@@ -130,6 +142,7 @@ impl App {
             .and_then(|s| eframe::get_value(s, SETTINGS_KEY))
             .unwrap_or_default();
         theme::install(&cc.egui_ctx, settings.theme);
+        commands::set_overrides(&settings.shortcuts);
         let sessions: Vec<PackSession> = cc
             .storage
             .and_then(|s| eframe::get_value(s, SESSIONS_KEY))
@@ -142,6 +155,7 @@ impl App {
             thumbs: Thumbnails::default(),
             search: String::new(),
             focus_search: false,
+            explorer_filter: explorer::Filter::default(),
             dock: DockState::new(Vec::new()),
             editors: HashMap::new(),
             next_id: 1,
@@ -154,12 +168,17 @@ impl App {
             dialog_fresh: false,
             palette: None,
             sessions,
+            trashed: Vec::new(),
+            recovery: crate::recovery::Recovery::default(),
+            tour: None,
+            layout: crate::tour::Layout::default(),
             status: Status {
                 text: "Ready".to_owned(),
                 level: Level::Info,
                 shown_at: None,
             },
             toasts: Toasts::default(),
+            confetti: crate::confetti::Confetti::default(),
             allow_quit: false,
             title_stale: true,
             render_state: cc.wgpu_render_state.clone(),
@@ -208,6 +227,13 @@ impl App {
 
     pub(crate) fn success(&mut self, text: impl Into<String>) {
         self.notify(Level::Success, text);
+    }
+
+    /// Fires a burst of confetti, unless celebrations are turned off in the View menu.
+    pub(crate) fn celebrate(&mut self) {
+        if self.settings.celebrations {
+            self.confetti.burst();
+        }
     }
 
     pub(crate) fn warn(&mut self, text: impl Into<String>) {
@@ -279,6 +305,8 @@ impl App {
         match Pack::open(&root) {
             Ok(pack) => {
                 self.remember_session();
+                // Nothing is unsaved here, so the old pack's recovery files are not needed.
+                self.finish_recovery();
                 self.tree = Tree::build(&pack.index);
                 self.success(format!(
                     "Opened {} ({} assets)",
@@ -292,17 +320,32 @@ impl App {
                 self.dock = DockState::new(Vec::new());
                 self.active = None;
                 self.search.clear();
+                self.explorer_filter.namespace = None;
+                self.trashed.clear();
                 self.title_stale = true;
 
                 self.recent.retain(|p| p != &path);
                 self.recent.insert(0, path.clone());
                 self.recent.truncate(MAX_RECENT);
                 self.restore_session(&path);
+                self.check_recovery();
+                if !self.settings.tour_done && self.tour.is_none() {
+                    self.start_tour();
+                }
             }
             Err(e) => {
                 self.recent.retain(|p| p != &path);
                 self.error(format!("Could not open pack:\n{e}"));
             }
+        }
+    }
+
+    /// Opens a pack that was just made, with a celebration once it is actually open
+    /// (opening waits if the current pack has unsaved edits to deal with first).
+    pub(crate) fn open_new_pack(&mut self, root: PathBuf) {
+        self.open_pack(root.clone());
+        if self.pack.as_ref().is_some_and(|p| p.root() == root) {
+            self.celebrate();
         }
     }
 
@@ -342,7 +385,10 @@ impl App {
         let tabs: Vec<String> = session
             .tabs
             .into_iter()
-            .filter(|t| pack.index.entries.iter().any(|e| &e.rel_path == t))
+            .filter(|t| {
+                pack.index.entries.iter().any(|e| &e.rel_path == t)
+                    || (t == PACK_ICON && pack.exists(PACK_ICON))
+            })
             .collect();
         for tab in &tabs {
             self.open_asset(tab);
@@ -416,6 +462,7 @@ impl App {
                 let message = format!("Exported {count} files to {}", dest.display());
                 if self.dirty_ids().is_empty() && !self.pack_dirty() {
                     self.success(message);
+                    self.celebrate();
                 } else {
                     self.warn(format!("{message}\nUnsaved edits were not included."));
                 }
@@ -454,7 +501,11 @@ impl App {
             .entries
             .iter()
             .find(|e| e.rel_path == rel_path)
-            .map(|e| e.kind);
+            .map(|e| e.kind)
+            // The pack icon lives outside assets/, so it is not in the index.
+            .or_else(|| {
+                (rel_path == PACK_ICON && pack.exists(PACK_ICON)).then_some(AssetKind::Texture)
+            });
         let mut fallback = None;
         let editor = match kind {
             Some(AssetKind::Texture) => {
@@ -551,6 +602,7 @@ impl App {
             (Command::Redo, Some(editor)) => editor.can_undo_redo().1,
             (Command::Save, Some(editor)) => editor.dirty(),
             (Command::SaveAll, _) => !self.dirty_ids().is_empty() || self.pack_dirty(),
+            (Command::RestoreDeleted, _) => !self.trashed.is_empty(),
             (Command::Deselect, Some(Editor::Texture(editor))) => {
                 editor.doc.selection().is_some() || editor.doc.stroke_active()
             }
@@ -635,9 +687,21 @@ impl App {
                 self.focus_search = true;
             }
             Command::OpenPalette => self.palette = Some(PaletteState::new()),
-            Command::ShowShortcuts => self.open_dialog(Dialog::Shortcuts),
+            Command::ShowShortcuts => self.open_dialog(Dialog::Shortcuts(Default::default())),
             Command::About => self.open_dialog(Dialog::About),
+            Command::StartTour => self.start_tour(),
             Command::Cut | Command::Copy | Command::Paste => self.clipboard_command(command),
+            Command::RenameAsset | Command::DuplicateAsset | Command::DeleteAsset => {
+                let Some(rel_path) = self.active_asset() else {
+                    return;
+                };
+                match command {
+                    Command::RenameAsset => self.start_rename(&rel_path),
+                    Command::DuplicateAsset => self.duplicate_asset(&rel_path),
+                    _ => self.start_delete(&rel_path),
+                }
+            }
+            Command::RestoreDeleted => self.restore_deleted(),
             Command::ToggleGrid => {
                 if let Some(editor) = texture_mut(&mut self.editors, self.active) {
                     editor.show_grid ^= true;
@@ -767,7 +831,11 @@ impl App {
     // ---- input ----
 
     fn shortcuts(&mut self, ctx: &egui::Context) {
-        if !self.dialogs.is_empty() || self.job.is_some() || self.palette.is_some() {
+        if !self.dialogs.is_empty()
+            || self.job.is_some()
+            || self.palette.is_some()
+            || self.tour.is_some()
+        {
             return;
         }
         let typing = ctx.text_edit_focused();
@@ -780,7 +848,8 @@ impl App {
         ctx.input_mut(|input| {
             for (command, shortcut) in commands::bindings() {
                 let bare = !shortcut.modifiers.command;
-                if (typing && !command.works_while_typing())
+                // A bare key (rebound, say) never fires while typing, or it could not be typed.
+                if (typing && (!command.works_while_typing() || bare))
                     || (popup_open && bare)
                     || !command.needs().met(has_pack, active)
                 {
@@ -962,6 +1031,11 @@ impl App {
                 self.menu_item(ui, Command::SaveAll);
                 self.menu_item(ui, Command::CloseTab);
                 ui.separator();
+                self.menu_item(ui, Command::RenameAsset);
+                self.menu_item(ui, Command::DuplicateAsset);
+                self.menu_item(ui, Command::DeleteAsset);
+                self.menu_item(ui, Command::RestoreDeleted);
+                ui.separator();
                 self.menu_item(ui, Command::ExportZip);
                 self.menu_item(ui, Command::Rescan);
                 ui.separator();
@@ -1030,6 +1104,8 @@ impl App {
                         }
                     }
                 });
+                ui.checkbox(&mut self.settings.celebrations, "Celebrations")
+                    .on_hover_text("Confetti when you create or export a pack");
             });
 
             ui.menu_button("Tools", |ui| {
@@ -1041,6 +1117,7 @@ impl App {
             ui.menu_button("Help", |ui| {
                 self.menu_item(ui, Command::OpenPalette);
                 self.menu_item(ui, Command::ShowShortcuts);
+                self.menu_item(ui, Command::StartTour);
                 ui.separator();
                 ui.hyperlink_to(
                     widgets::icon_label(icons::BOOK, "Documentation"),
@@ -1139,6 +1216,15 @@ impl App {
             ui.label(widgets::icon(icons::PACKAGE).color(theme::of(ui).accent));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 0.0;
+                let grid = &mut self.settings.explorer_grid;
+                let (glyph, tip) = if *grid {
+                    (icons::LIST, "Show as a list")
+                } else {
+                    (icons::GRID, "Show thumbnails in a grid")
+                };
+                if widgets::icon_button(ui, glyph, tip).clicked() {
+                    *grid = !*grid;
+                }
                 for command in [Command::Rescan, Command::NewModel, Command::NewTexture] {
                     if widgets::icon_button(ui, command.icon(), &command.tooltip(&ctx)).clicked() {
                         run = Some(command);
@@ -1173,7 +1259,10 @@ impl App {
             }
         });
         ui.add_space(SPACE_S);
+        self.explorer_filter_row(ui);
+        ui.add_space(SPACE_S);
 
+        let Some(pack) = &self.pack else { return };
         let active = self
             .active
             .and_then(|id| self.editors.get(&id))
@@ -1184,7 +1273,12 @@ impl App {
             active,
             actions: Vec::new(),
         };
-        explorer.show(ui, &mut self.tree, &self.search);
+        let view = explorer::View {
+            search: &self.search,
+            filter: &self.explorer_filter,
+            grid: self.settings.explorer_grid,
+        };
+        explorer.show(ui, &mut self.tree, &view);
         let actions = explorer.actions;
 
         for action in actions {
@@ -1207,11 +1301,63 @@ impl App {
                 Action::NewModel(namespace, folder) => {
                     self.open_dialog(Dialog::new_model_in(&namespace, &folder));
                 }
+                Action::Rename(rel_path) => self.start_rename(&rel_path),
+                Action::Duplicate(rel_path) => self.duplicate_asset(&rel_path),
+                Action::Delete(rel_path) => self.start_delete(&rel_path),
             }
         }
         if let Some(command) = run {
             self.run(command, &ctx);
         }
+    }
+
+    /// Kind and namespace pickers, and the list / grid switch, under the explorer's search.
+    fn explorer_filter_row(&mut self, ui: &mut egui::Ui) {
+        let Some(pack) = &self.pack else { return };
+        let filter = &mut self.explorer_filter;
+        let namespaces = pack.index.namespaces();
+        let show_namespaces = namespaces.len() > 1 || filter.namespace.is_some();
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = SPACE_S;
+            // Each picker takes an equal share of the row.
+            let pickers = if show_namespaces { 2.0 } else { 1.0 };
+            let share = (ui.available_width() - SPACE_S * (pickers - 1.0)) / pickers;
+            let kind = filter.kind;
+            ui.scope(|ui| {
+                ui.spacing_mut().combo_width = share;
+                egui::ComboBox::from_id_salt("explorer_kind")
+                    .selected_text(widgets::icon_label(kind.icon(), kind.name()))
+                    .width(share)
+                    .truncate()
+                    .show_ui(ui, |ui| {
+                        for choice in explorer::KindFilter::ALL {
+                            let label = widgets::icon_label(choice.icon(), choice.name());
+                            ui.selectable_value(&mut filter.kind, choice, label);
+                        }
+                    })
+                    .response
+                    .on_hover_text("Show only one kind of file");
+            });
+            if show_namespaces {
+                let shown = filter.namespace.as_deref().unwrap_or("All namespaces");
+                egui::ComboBox::from_id_salt("explorer_namespace")
+                    .selected_text(shown)
+                    .width(ui.available_width())
+                    .truncate()
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut filter.namespace, None, "All namespaces");
+                        for namespace in namespaces {
+                            ui.selectable_value(
+                                &mut filter.namespace,
+                                Some(namespace.to_owned()),
+                                namespace,
+                            );
+                        }
+                    })
+                    .response
+                    .on_hover_text("Show only one namespace");
+            }
+        });
     }
 
     fn welcome(&mut self, ui: &mut egui::Ui) {
@@ -1281,6 +1427,17 @@ impl App {
             );
             ui.add_space(SPACE_S);
             ui.label(RichText::new("or drop a pack folder or zip onto this window").weak());
+            if self.recent.is_empty() {
+                ui.add_space(SPACE_M);
+                ui.label(
+                    RichText::new(widgets::icon_label(
+                        icons::LIGHTBULB,
+                        "New to resource packs? Load Default Pack gives you Minecraft's own \
+                         textures and models to change.",
+                    ))
+                    .color(accent),
+                );
+            }
             if let Some(shortcut) = Command::OpenPalette.shortcut() {
                 ui.add_space(SPACE_S);
                 ui.label(
@@ -1406,6 +1563,7 @@ impl eframe::App for App {
         let ctx = ui.ctx().clone();
         self.thumbs.begin_frame();
         self.poll_jobs();
+        self.autosave_tick(&ctx);
         self.update_title(&ctx);
         self.close_requested(&ctx);
         self.dropped_files(&ctx);
@@ -1413,31 +1571,37 @@ impl eframe::App for App {
 
         egui::Panel::top("menu_bar").show(ui, |ui| self.menu_bar(ui));
         let status = egui::Panel::bottom("status_bar").show(ui, |ui| self.status_bar(ui));
+        self.layout = crate::tour::Layout::default();
         if self.pack.is_some() {
             if self.settings.show_explorer {
-                egui::Panel::left("explorer")
+                let panel = egui::Panel::left("explorer")
                     .resizable(true)
                     .default_size(260.0)
                     .size_range(180.0..=520.0)
                     .show(ui, |ui| self.explorer_panel(ui));
+                self.layout.explorer = Some(panel.response.rect);
             }
             if self.settings.show_inspector {
-                egui::Panel::right("inspector")
+                let panel = egui::Panel::right("inspector")
                     .resizable(true)
                     .default_size(300.0)
                     .size_range(240.0..=520.0)
                     .show(ui, |ui| self.inspector_panel(ui));
+                self.layout.inspector = Some(panel.response.rect);
             }
         }
         let frame = egui::Frame::central_panel(ui.style()).inner_margin(0);
-        egui::CentralPanel::default()
+        let central = egui::CentralPanel::default()
             .frame(frame)
             .show(ui, |ui| self.central(ui));
+        self.layout.central = Some(central.response.rect);
 
         self.show_dialog(&ctx);
         self.show_command_palette(&ctx);
+        self.show_tour(&ctx);
         self.show_job(&ctx);
         self.toasts.show(&ctx, status.response.rect.height());
+        self.confetti.show(&ctx);
         Self::drop_overlay(&ctx);
     }
 
@@ -1447,6 +1611,14 @@ impl eframe::App for App {
         eframe::set_value(storage, SETTINGS_KEY, &self.settings);
         self.remember_session();
         eframe::set_value(storage, SESSIONS_KEY, &self.sessions);
+    }
+
+    fn on_exit(&mut self) {
+        // A normal exit has dealt with every unsaved change (saved or discarded), so the
+        // recovery files are only needed after a crash.
+        if self.dirty_ids().is_empty() {
+            self.finish_recovery();
+        }
     }
 }
 

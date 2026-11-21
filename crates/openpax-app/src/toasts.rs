@@ -101,7 +101,9 @@ impl Toasts {
                     let remaining = toast.level.lifetime() - age;
                     // Fade in quickly, fade out over the last half second.
                     let opacity = (age / 0.15).min(remaining / 0.5).clamp(0.0, 1.0) as f32;
-                    ui.scope(|ui| {
+                    let offset = slide_offset(age, remaining);
+                    let transform = egui::emath::TSTransform::from_translation(vec2(offset, 0.0));
+                    ui.with_visual_transform(transform, |ui| {
                         ui.set_opacity(opacity);
                         let color = toast.level.color(ui);
                         egui::Frame::popup(ui.style())
@@ -136,8 +138,40 @@ impl Toasts {
         if let Some(index) = dismissed {
             self.items.remove(index);
         }
-        ctx.request_repaint_after(Duration::from_millis(50));
+        // Smooth frames while a toast is sliding, a slow tick otherwise.
+        let moving = self.items.iter().any(|t| {
+            let age = now - t.shown_at.unwrap_or(now);
+            age < SLIDE_IN || t.level.lifetime() - age < SLIDE_OUT
+        });
+        if moving {
+            ctx.request_repaint();
+        } else {
+            ctx.request_repaint_after(Duration::from_millis(50));
+        }
     }
+}
+
+/// Seconds a toast takes to slide in.
+const SLIDE_IN: f64 = 0.35;
+/// Seconds a toast takes to drift out before it disappears.
+const SLIDE_OUT: f64 = 0.5;
+/// How far (in points) a toast travels while sliding.
+const SLIDE_DISTANCE: f32 = 80.0;
+
+/// Horizontal offset of a toast: it springs in from the right, overshooting a little,
+/// and drifts back to the right while fading out.
+fn slide_offset(age: f64, remaining: f64) -> f32 {
+    let entering = (age / SLIDE_IN).clamp(0.0, 1.0) as f32;
+    let leaving = 1.0 - (remaining / SLIDE_OUT).clamp(0.0, 1.0) as f32;
+    (1.0 - ease_out_back(entering)) * SLIDE_DISTANCE + leaving * leaving * SLIDE_DISTANCE * 0.5
+}
+
+/// Eases from 0 to 1, going slightly past 1 before settling.
+pub fn ease_out_back(t: f32) -> f32 {
+    const C1: f32 = 1.70158;
+    const C3: f32 = C1 + 1.0;
+    let u = t - 1.0;
+    1.0 + C3 * u * u * u + C1 * u * u
 }
 
 #[cfg(test)]
@@ -155,5 +189,16 @@ mod tests {
         }
         assert_eq!(toasts.items.len(), MAX_TOASTS);
         assert_eq!(toasts.items.last().unwrap().text, "message 9");
+    }
+
+    #[test]
+    fn toasts_slide_in_overshoot_and_settle() {
+        assert!((slide_offset(0.0, 10.0) - SLIDE_DISTANCE).abs() < 1e-3);
+        assert!(
+            slide_offset(SLIDE_IN * 0.8, 10.0) < 0.0,
+            "overshoots past its resting place"
+        );
+        assert!(slide_offset(SLIDE_IN, 10.0).abs() < 1e-3);
+        assert!(slide_offset(5.0, 0.0) > 0.0, "drifts out at the end");
     }
 }

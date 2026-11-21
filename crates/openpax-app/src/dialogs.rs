@@ -12,7 +12,6 @@ use openpax_model::{Element, ModelFile};
 use openpax_paint::Bitmap;
 
 use crate::app::{App, texture_mut};
-use crate::commands::Command;
 use crate::remix_ui::{LoadDefaultState, RemixState};
 use crate::theme::{self, DIALOG_WIDTH, SPACE_L, SPACE_M, SPACE_S};
 use crate::{icons, widgets};
@@ -50,8 +49,20 @@ pub enum Dialog {
     },
     LoadDefault(Box<LoadDefaultState>),
     Remix(Box<RemixState>),
-    Shortcuts,
+    Shortcuts(crate::shortcuts_ui::ShortcutEditor),
     About,
+    /// Rename or move an asset; `path` is the new path below its category, without extension.
+    RenameAsset {
+        from: String,
+        path: String,
+    },
+    DeleteAsset {
+        rel_path: String,
+    },
+    /// Unsaved work found after OpenPax did not close normally.
+    Recover {
+        assets: Vec<String>,
+    },
 }
 
 /// What an unsaved-changes prompt is guarding.
@@ -254,7 +265,7 @@ impl App {
         let mut done = false;
         let modal = egui::Modal::new(egui::Id::unique(("openpax_dialog", depth))).show(ctx, |ui| {
             ui.set_width(match dialog {
-                Dialog::Remix(_) | Dialog::Shortcuts => WIDE_DIALOG_WIDTH,
+                Dialog::Remix(_) | Dialog::Shortcuts(_) => WIDE_DIALOG_WIDTH,
                 Dialog::LoadDefault(_) => DIALOG_WIDTH + 80.0,
                 _ => DIALOG_WIDTH,
             });
@@ -278,8 +289,20 @@ impl App {
                 Dialog::ConfirmClose { ids, then } => self.confirm_close_dialog(ui, ids, then),
                 Dialog::LoadDefault(state) => self.load_default_dialog(ui, state),
                 Dialog::Remix(state) => self.remix_dialog(ui, state),
-                Dialog::Shortcuts => shortcuts_dialog(ui),
+                Dialog::Shortcuts(state) => self.shortcuts_dialog(ui, state),
                 Dialog::About => about_dialog(ui),
+                Dialog::RenameAsset { from, path } => {
+                    let from = from.clone();
+                    self.rename_dialog(ui, fresh, &from, path)
+                }
+                Dialog::DeleteAsset { rel_path } => {
+                    let rel_path = rel_path.clone();
+                    self.delete_dialog(ui, &rel_path)
+                }
+                Dialog::Recover { assets } => {
+                    let assets = assets.clone();
+                    self.recover_dialog(ui, &assets)
+                }
             };
         });
         // Escape or a click outside cancels.
@@ -317,7 +340,7 @@ impl App {
         {
             let root = parent.join(name.trim());
             match Pack::create(&root, description, *format) {
-                Ok(_) => self.open_pack(root),
+                Ok(_) => self.open_new_pack(root),
                 Err(e) => self.error(format!("Could not create pack:\n{e}")),
             }
             return true;
@@ -563,83 +586,8 @@ impl App {
     }
 }
 
-/// Mouse gestures that have no command of their own, for the shortcut sheet.
-const MOUSE_HINTS: &[(&str, &str, &str)] = &[
-    (
-        "Paint with the primary / secondary colour",
-        "Left / right button",
-        "Texture",
-    ),
-    ("Pick a colour from the canvas", "Hold Alt", "Texture"),
-    ("Pan", "Middle-drag or Space+drag", "Texture"),
-    ("Zoom towards the cursor", "Scroll or pinch", "Texture"),
-    ("Orbit / pan the camera", "Left-drag / right-drag", "Model"),
-    ("Select an element", "Click it", "Model"),
-];
-
-/// Every command's shortcuts, grouped by menu, read straight from the command registry.
-fn shortcuts_dialog(ui: &mut egui::Ui) -> bool {
-    header(ui, icons::KEYBOARD, "Keyboard Shortcuts");
-    let ctx = ui.ctx().clone();
-    egui::ScrollArea::vertical()
-        .max_height(ctx.content_rect().height() * 0.6)
-        .show(ui, |ui| {
-            for category in ["File", "Edit", "View", "Tools", "Help"] {
-                let commands: Vec<Command> = Command::all()
-                    .filter(|c| c.category() == category && !c.shortcuts().is_empty())
-                    .collect();
-                if commands.is_empty() {
-                    continue;
-                }
-                widgets::caption(ui, &category.to_uppercase());
-                shortcut_grid(ui, category, |ui| {
-                    for command in commands {
-                        let keys: Vec<String> = command
-                            .shortcuts()
-                            .iter()
-                            .map(|s| ctx.format_shortcut(s))
-                            .collect();
-                        shortcut_row(
-                            ui,
-                            command.icon(),
-                            command.label().trim_end_matches('…'),
-                            &keys.join("  or  "),
-                            command.context(),
-                        );
-                    }
-                });
-                ui.add_space(SPACE_M);
-            }
-            widgets::caption(ui, "MOUSE");
-            shortcut_grid(ui, "mouse", |ui| {
-                for (action, gesture, context) in MOUSE_HINTS {
-                    shortcut_row(ui, icons::INFO, action, gesture, context);
-                }
-            });
-        });
-    ui.add_space(SPACE_S);
-    ui.weak("Every command, with or without a shortcut, is also in the Command Palette.");
-    footer_close(ui)
-}
-
-fn shortcut_grid(ui: &mut egui::Ui, id: &str, add_rows: impl FnOnce(&mut egui::Ui)) {
-    egui::Grid::new(("shortcuts", id))
-        .num_columns(3)
-        .spacing([SPACE_L, SPACE_S])
-        .striped(true)
-        .min_col_width(120.0)
-        .show(ui, add_rows);
-}
-
-fn shortcut_row(ui: &mut egui::Ui, glyph: &str, label: &str, keys: &str, context: &str) {
-    ui.label(widgets::icon_label(glyph, label));
-    ui.label(RichText::new(keys).monospace().strong());
-    ui.weak(context);
-    ui.end_row();
-}
-
 /// A dialog footer with a single Close button; Enter closes too. Returns true when closed.
-fn footer_close(ui: &mut egui::Ui) -> bool {
+pub(crate) fn footer_close(ui: &mut egui::Ui) -> bool {
     ui.add_space(SPACE_L);
     let enter = ui.input(|i| i.key_pressed(Key::Enter));
     let mut close = false;

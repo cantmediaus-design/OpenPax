@@ -5,6 +5,7 @@
 
 mod archive;
 mod error;
+mod file_ops;
 mod formats;
 mod pack;
 mod pack_meta;
@@ -16,6 +17,7 @@ pub mod vanilla;
 
 pub use archive::{export_zip, import_zip};
 pub use error::{Error, Result};
+pub use file_ops::TRASH_DIR;
 pub use formats::{RESOURCE_FORMATS, version_for_format};
 pub use pack::{AssetEntry, AssetIndex, AssetKind, Pack, SIDECAR_DIR};
 pub use pack_meta::{PackMeta, PackSection};

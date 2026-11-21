@@ -274,7 +274,7 @@ impl App {
             Outcome::Done(JobResult::PackCreated(root)) => {
                 self.dialogs
                     .retain(|d| !matches!(d, Dialog::LoadDefault(_) | Dialog::Remix(_)));
-                self.open_pack(root);
+                self.open_new_pack(root);
             }
             Outcome::Cancelled => self.info("Cancelled"),
             Outcome::Failed(e) => self.error(e),

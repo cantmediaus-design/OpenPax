@@ -144,6 +144,65 @@ impl Editor {
         }
     }
 
+    /// What [`Self::save`] would write, as `(suffix after the asset path, bytes)` pairs, for
+    /// crash recovery. The suffixes match [`crate::recovery`]'s file naming.
+    pub fn snapshot(&self) -> Result<Vec<(&'static str, Vec<u8>)>, String> {
+        let mut files = Vec::new();
+        match self {
+            Self::Texture(e) => {
+                let png = openpax_paint::encode_png(&e.doc.flatten()).map_err(|e| e.to_string())?;
+                files.push(("", png));
+                if e.doc.layers().len() > 1 {
+                    let (json, strip) =
+                        openpax_paint::encode_layered(&e.doc).map_err(|e| e.to_string())?;
+                    files.push((LAYERS_JSON, json.into_bytes()));
+                    files.push((LAYERS_PNG, strip));
+                }
+                if !e.meta.is_empty() {
+                    files.push((".mcmeta", e.meta.to_json().into_bytes()));
+                }
+            }
+            Self::Model(e) => files.push(("", e.doc.model().to_json().into_bytes())),
+            Self::Text(e) => files.push(("", e.text().as_bytes().to_vec())),
+        }
+        Ok(files)
+    }
+
+    /// Loads a snapshot made by [`Self::snapshot`] into this editor as unsaved changes.
+    pub fn restore_snapshot(
+        &mut self,
+        read: impl Fn(&str) -> Option<Vec<u8>>,
+    ) -> Result<(), String> {
+        let main = read("").ok_or("the recovered file is missing")?;
+        match self {
+            Self::Texture(e) => {
+                let bitmap = openpax_paint::decode_png(&main).map_err(|e| e.to_string())?;
+                let layered = read(LAYERS_JSON)
+                    .zip(read(LAYERS_PNG))
+                    .and_then(|(json, png)| {
+                        openpax_paint::decode_layered(&String::from_utf8_lossy(&json), &png).ok()
+                    })
+                    .filter(|doc| doc.flatten() == bitmap);
+                let doc = layered.unwrap_or_else(|| Document::from_bitmap(bitmap));
+                let meta = match read(".mcmeta") {
+                    Some(json) => serde_json::from_slice(&json).map_err(|e| e.to_string())?,
+                    None => TextureMeta::default(),
+                };
+                e.restore(doc, meta);
+            }
+            Self::Model(e) => {
+                let text = String::from_utf8(main).map_err(|e| e.to_string())?;
+                let model =
+                    openpax_model::ModelFile::from_json(&text).map_err(|e| e.to_string())?;
+                e.doc.modify(|m| *m = model);
+            }
+            Self::Text(e) => {
+                e.restore(String::from_utf8(main).map_err(|e| e.to_string())?);
+            }
+        }
+        Ok(())
+    }
+
     /// Whether the editor's own history can undo / redo (text tabs use the text box's).
     pub fn can_undo_redo(&self) -> (bool, bool) {
         match self {
@@ -185,6 +244,10 @@ pub struct TextureEditor {
     pub fit_pending: bool,
     pub show_grid: bool,
     pub tile_preview: bool,
+    /// Show each animation frame's predecessor faintly under it.
+    pub onion_skin: bool,
+    /// Selected entry of the animation's playback order in the inspector.
+    pub timeline_selected: Option<usize>,
     /// Pixel under the cursor, for the status bar.
     pub hover: Option<(i32, i32)>,
     /// The mouse button the stroke in progress was started with.
@@ -228,6 +291,8 @@ impl TextureEditor {
             fit_pending: true,
             show_grid: true,
             tile_preview: false,
+            onion_skin: false,
+            timeline_selected: None,
             hover: None,
             stroke_button: None,
             renaming: None,
@@ -264,6 +329,17 @@ impl TextureEditor {
         }
         self.saved_revision = self.doc.revision();
         Ok(())
+    }
+
+    /// Replaces the image and metadata with recovered, unsaved ones.
+    pub fn restore(&mut self, doc: Document, meta: TextureMeta) {
+        self.doc = doc;
+        self.meta = meta;
+        // Neither revision can match the new document's, so it counts as unsaved and redraws.
+        self.saved_revision = u64::MAX;
+        self.texture_revision = u64::MAX;
+        self.layer_thumbs_revision = u64::MAX;
+        self.fit_pending = true;
     }
 
     /// The flattened document as a GPU texture, refreshed when the document changes.
@@ -493,6 +569,35 @@ impl TextureEditor {
                     let tint = Color32::from_white_alpha(110);
                     painter.image(texture_id, image_rect.translate(offset), full_uv, tint);
                 }
+            }
+        }
+        // Onion skin: each frame's predecessor shows faintly through its transparent pixels.
+        if self.onion_skin
+            && let Some(animation) = &self.meta.animation
+        {
+            let (width, height) = (self.doc.width(), self.doc.height());
+            let (fw, fh) = animation.frame_size(width, height);
+            let count = animation.frame_count(width, height);
+            let columns = (width / fw).max(1);
+            let frame_rect = |i: u32| {
+                let (col, row) = (i % columns, i / columns);
+                Rect::from_min_size(
+                    pos2((col * fw) as f32, (row * fh) as f32),
+                    vec2(fw as f32, fh as f32),
+                )
+            };
+            let tint = Color32::from_white_alpha(80);
+            for i in 1..count {
+                let (from, to) = (frame_rect(i - 1), frame_rect(i));
+                let uv = Rect::from_min_max(
+                    pos2(from.min.x / size.x, from.min.y / size.y),
+                    pos2(from.max.x / size.x, from.max.y / size.y),
+                );
+                let screen = Rect::from_min_max(
+                    to_screen(to.min.x, to.min.y),
+                    to_screen(to.max.x, to.max.y),
+                );
+                painter.image(texture_id, screen, uv, tint);
             }
         }
         painter.image(texture_id, image_rect, full_uv, Color32::WHITE);
@@ -736,6 +841,16 @@ impl TextEditor {
             .map_err(|e| e.to_string())?;
         self.saved.clone_from(&self.text);
         Ok(())
+    }
+
+    /// Replaces the text with recovered, unsaved text.
+    pub fn restore(&mut self, text: String) {
+        self.text = text;
+        self.text_changed();
+    }
+
+    pub fn text(&self) -> &str {
+        &self.text
     }
 
     fn is_json(&self) -> bool {

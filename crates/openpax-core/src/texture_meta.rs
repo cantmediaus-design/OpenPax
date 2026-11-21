@@ -86,6 +86,35 @@ impl Animation {
         }
     }
 
+    /// Sets the playback order from `(frame index, duration in ticks)` pairs. The plain order
+    /// (every frame once, at the default time) is stored as no `frames` list at all, and
+    /// entries at the default time are stored as bare indices, as Minecraft writes them.
+    pub fn set_sequence(&mut self, sequence: &[(u32, u32)], tex_width: u32, tex_height: u32) {
+        let default_time = self.frametime.unwrap_or(1).max(1);
+        let plain: Vec<(u32, u32)> = (0..self.frame_count(tex_width, tex_height))
+            .map(|i| (i, default_time))
+            .collect();
+        self.frames = if sequence == plain.as_slice() {
+            None
+        } else {
+            Some(
+                sequence
+                    .iter()
+                    .map(|&(index, time)| {
+                        if time == default_time {
+                            Frame::Index(index)
+                        } else {
+                            Frame::Timed {
+                                index,
+                                time: Some(time.max(1)),
+                            }
+                        }
+                    })
+                    .collect(),
+            )
+        };
+    }
+
     /// The frame index showing at `tick` ticks into (looping) playback.
     pub fn frame_at(&self, tex_width: u32, tex_height: u32, tick: u64) -> u32 {
         let sequence = self.sequence(tex_width, tex_height);
@@ -132,6 +161,35 @@ mod tests {
         assert_eq!(anim.frame_at(16, 48, 2), 2);
         assert_eq!(anim.frame_at(16, 48, 7), 1);
         assert_eq!(anim.frame_at(16, 48, 9), 0);
+    }
+
+    #[test]
+    fn set_sequence_writes_the_shortest_form() {
+        let mut anim = Animation {
+            frametime: Some(2),
+            ..Default::default()
+        };
+        anim.set_sequence(&[(0, 2), (1, 2), (2, 2)], 16, 48);
+        assert_eq!(anim.frames, None, "the plain order needs no list");
+
+        anim.set_sequence(&[(2, 2), (0, 5), (1, 2)], 16, 48);
+        assert_eq!(
+            anim.frames,
+            Some(vec![
+                Frame::Index(2),
+                Frame::Timed {
+                    index: 0,
+                    time: Some(5)
+                },
+                Frame::Index(1),
+            ])
+        );
+        assert_eq!(anim.sequence(16, 48), vec![(2, 2), (0, 5), (1, 2)]);
+        let json = serde_json::to_string(&anim).unwrap();
+        assert!(
+            json.contains(r#""frames":[2,{"index":0,"time":5},1]"#),
+            "{json}"
+        );
     }
 
     #[test]

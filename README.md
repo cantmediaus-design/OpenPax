@@ -9,12 +9,20 @@ building models and animating them. It is early software; see the roadmap for wh
 
 - **Packs**: create a new pack for a chosen game version, open a pack folder, import a `.zip`,
   edit `pack.mcmeta`, and export a `.zip` that Minecraft can load.
-- **Explorer**: assets grouped by namespace and type, with search and texture thumbnails.
+- **Explorer**: assets grouped by namespace and type, with search, kind and namespace
+  filters, and a thumbnail grid view. Right-click a file to rename or move it, duplicate it or
+  delete it; its `.mcmeta` and layers go along. Deleted files go to the pack's
+  `.openpax/trash` folder, and File → Restore Deleted File brings them back.
+- **Pack icon**: preview `pack.png` in the Pack section, edit it, make it from the open
+  texture, or import an image.
+- **Crash recovery**: unsaved edits are copied to `.openpax/recovery` every 20 seconds and
+  offered back if OpenPax did not close normally.
 - **Pixel editor**: pencil, eraser, fill, colour picker, line, rectangle, ellipse, rectangular
   selection and move; brush size, X/Y mirroring, palette, layers with opacity, undo/redo,
   canvas resize and flip, pixel grid and tiling preview.
-- **Texture animation**: edit the `.mcmeta` animation settings, add or remove frames, and watch
-  a live preview at game speed.
+- **Texture animation**: edit the `.mcmeta` animation settings, add or remove frames, edit
+  the playback order and per-step timing, turn on onion skin, and watch a live preview at game
+  speed.
 - **3D model editor** (early): block/item models open in a wgpu viewport with the pack's own
   textures. Orbit, pan and zoom; click to select an element; add, duplicate and delete cubes;
   edit position, size, rotation, per-face texture, UV and texture rotation; manage texture
@@ -35,7 +43,8 @@ building models and animating them. It is early software; see the roadmap for wh
 | Save / Save All / Close Tab | Ctrl+S / Ctrl+Shift+S / Ctrl+W |
 | Undo / Redo | Ctrl+Z / Ctrl+Shift+Z or Ctrl+Y |
 | Command palette (every command, and Go to File) | Ctrl+Shift+P or Ctrl+K |
-| Keyboard shortcut sheet | F1 or Ctrl+/ |
+| Keyboard shortcuts (click one to rebind it) | F1 or Ctrl+/ |
+| Rename or move the open file | F2 |
 | Cut / Copy / Paste pixels | Ctrl+X / Ctrl+C / Ctrl+V |
 | Search assets | Ctrl+F |
 | Show or hide the explorer / inspector | Ctrl+B / Ctrl+I |

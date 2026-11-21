@@ -2,8 +2,9 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use eframe::egui::{self, Rect, RichText, TextureHandle, TextureOptions, pos2, vec2};
+use eframe::egui::{self, Rect, RichText, Sense, TextureHandle, TextureOptions, Vec2, pos2, vec2};
 use openpax_core::{AssetEntry, AssetIndex, AssetKind, Pack};
+use serde::{Deserialize, Serialize};
 
 use crate::theme::{self, ROW_HEIGHT, SPACE_S};
 use crate::{icons, widgets};
@@ -15,6 +16,106 @@ const MAX_THUMB_PIXELS: u32 = 1024 * 1024;
 /// Folders above this depth start out expanded (namespace and category).
 const DEFAULT_OPEN_DEPTH: usize = 2;
 const INDENT: f32 = 14.0;
+/// Size of a thumbnail in the grid view, and of a whole grid cell.
+const GRID_THUMB: f32 = 44.0;
+const GRID_CELL: Vec2 = vec2(64.0, 72.0);
+
+/// Which kinds of asset the explorer lists.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum KindFilter {
+    #[default]
+    All,
+    Textures,
+    Models,
+    States,
+    Language,
+    Sounds,
+    Other,
+}
+
+impl KindFilter {
+    pub const ALL: [Self; 7] = [
+        Self::All,
+        Self::Textures,
+        Self::Models,
+        Self::States,
+        Self::Language,
+        Self::Sounds,
+        Self::Other,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::All => "All files",
+            Self::Textures => "Textures",
+            Self::Models => "Models",
+            Self::States => "Blockstates & items",
+            Self::Language => "Language",
+            Self::Sounds => "Sounds",
+            Self::Other => "Other",
+        }
+    }
+
+    pub fn icon(self) -> &'static str {
+        match self {
+            Self::All => icons::FUNNEL,
+            Self::Textures => icons::IMAGE,
+            Self::Models => icons::CUBE,
+            Self::States => icons::FILE_CODE,
+            Self::Language => icons::LANGUAGE,
+            Self::Sounds => icons::SOUND,
+            Self::Other => icons::FILE,
+        }
+    }
+
+    pub fn accepts(self, entry: &AssetEntry) -> bool {
+        let sounds = entry.kind == AssetKind::Sound
+            || (entry.category.is_empty() && entry.path == "sounds.json");
+        match self {
+            Self::All => true,
+            Self::Textures => entry.kind == AssetKind::Texture,
+            Self::Models => entry.kind == AssetKind::Model,
+            Self::States => matches!(
+                entry.kind,
+                AssetKind::Blockstate | AssetKind::ItemDefinition
+            ),
+            Self::Language => entry.kind == AssetKind::Lang,
+            Self::Sounds => sounds,
+            Self::Other => {
+                !sounds
+                    && !matches!(
+                        entry.kind,
+                        AssetKind::Texture
+                            | AssetKind::Model
+                            | AssetKind::Blockstate
+                            | AssetKind::ItemDefinition
+                            | AssetKind::Lang
+                    )
+            }
+        }
+    }
+}
+
+/// What the explorer lists besides the search text: a kind of asset and a namespace.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Filter {
+    pub kind: KindFilter,
+    pub namespace: Option<String>,
+}
+
+impl Filter {
+    pub fn is_active(&self) -> bool {
+        self.kind != KindFilter::All || self.namespace.is_some()
+    }
+
+    pub fn accepts(&self, entry: &AssetEntry) -> bool {
+        self.kind.accepts(entry)
+            && self
+                .namespace
+                .as_ref()
+                .is_none_or(|n| *n == entry.namespace)
+    }
+}
 
 #[derive(Default)]
 struct Node {
@@ -50,8 +151,8 @@ pub struct Tree {
     /// Folders whose expanded state differs from the default for their depth.
     toggled: HashSet<String>,
     rows: Option<Vec<Row>>,
-    /// Lower-cased search text and the entries it matches.
-    search: Option<(String, Vec<usize>)>,
+    /// Lower-cased search text, the filter, and the entries they match.
+    search: Option<(String, Filter, Vec<usize>)>,
 }
 
 impl Tree {
@@ -102,20 +203,24 @@ impl Tree {
         self.rows.as_deref().unwrap_or_default()
     }
 
-    /// Entries whose path contains `needle` (case-insensitive).
-    pub fn matches(&mut self, index: &AssetIndex, needle: &str) -> &[usize] {
+    /// Entries whose path contains `needle` (case-insensitive) and that pass `filter`.
+    pub fn matches(&mut self, index: &AssetIndex, needle: &str, filter: &Filter) -> &[usize] {
         let needle = needle.trim().to_lowercase();
-        if self.search.as_ref().is_none_or(|(n, _)| *n != needle) {
+        if self
+            .search
+            .as_ref()
+            .is_none_or(|(n, f, _)| *n != needle || f != filter)
+        {
             let found = index
                 .entries
                 .iter()
                 .enumerate()
-                .filter(|(_, e)| e.rel_path.to_lowercase().contains(&needle))
+                .filter(|(_, e)| filter.accepts(e) && e.rel_path.to_lowercase().contains(&needle))
                 .map(|(i, _)| i)
                 .collect();
-            self.search = Some((needle, found));
+            self.search = Some((needle, filter.clone(), found));
         }
-        self.search.as_ref().map_or(&[], |(_, found)| found)
+        self.search.as_ref().map_or(&[], |(_, _, found)| found)
     }
 }
 
@@ -255,6 +360,17 @@ pub enum Action {
     /// Start the New Texture dialog with this namespace and folder.
     NewTexture(String, String),
     NewModel(String, String),
+    Rename(String),
+    Duplicate(String),
+    Delete(String),
+}
+
+/// How the explorer lists assets.
+pub struct View<'a> {
+    pub search: &'a str,
+    pub filter: &'a Filter,
+    /// Large thumbnails in a grid instead of the folder tree.
+    pub grid: bool,
 }
 
 pub struct Explorer<'a> {
@@ -266,12 +382,12 @@ pub struct Explorer<'a> {
 }
 
 impl Explorer<'_> {
-    pub fn show(&mut self, ui: &mut egui::Ui, tree: &mut Tree, search: &str) {
+    pub fn show(&mut self, ui: &mut egui::Ui, tree: &mut Tree, view: &View<'_>) {
         ui.spacing_mut().item_spacing.y = 0.0;
-        if search.trim().is_empty() {
+        if view.search.trim().is_empty() && !view.filter.is_active() && !view.grid {
             self.tree(ui, tree);
         } else {
-            self.results(ui, tree, search);
+            self.results(ui, tree, view);
         }
     }
 
@@ -318,21 +434,25 @@ impl Explorer<'_> {
         }
     }
 
-    fn results(&mut self, ui: &mut egui::Ui, tree: &mut Tree, search: &str) {
-        let found = tree.matches(&self.pack.index, search);
+    fn results(&mut self, ui: &mut egui::Ui, tree: &mut Tree, view: &View<'_>) {
+        let found = tree.matches(&self.pack.index, view.search, view.filter);
         ui.horizontal(|ui| {
             ui.add_space(SPACE_S);
-            let noun = if found.len() == 1 { "match" } else { "matches" };
+            let noun = if found.len() == 1 { "file" } else { "files" };
             widgets::caption(ui, &format!("{} {noun}", found.len()));
         });
         ui.add_space(SPACE_S);
         if found.is_empty() {
-            widgets::empty_state(
-                ui,
-                icons::SEARCH,
-                "No matching assets",
-                "Try a shorter search.",
-            );
+            let hint = if view.filter.is_active() {
+                "Try a shorter search, or show all files."
+            } else {
+                "Try a shorter search."
+            };
+            widgets::empty_state(ui, icons::SEARCH, "No matching assets", hint);
+            return;
+        }
+        if view.grid {
+            self.grid(ui, found);
             return;
         }
         egui::ScrollArea::vertical().auto_shrink(false).show_rows(
@@ -413,6 +533,86 @@ impl Explorer<'_> {
         response.clicked()
     }
 
+    /// Assets as large thumbnails, several to a row.
+    fn grid(&mut self, ui: &mut egui::Ui, found: &[usize]) {
+        let columns = ((ui.available_width() / GRID_CELL.x).floor() as usize).max(1);
+        let rows = found.len().div_ceil(columns);
+        egui::ScrollArea::vertical().auto_shrink(false).show_rows(
+            ui,
+            GRID_CELL.y,
+            rows,
+            |ui, range| {
+                for row in range {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        let start = row * columns;
+                        for index in &found[start..(start + columns).min(found.len())] {
+                            let entry = &self.pack.index.entries[*index];
+                            self.tile(ui, entry);
+                        }
+                    });
+                }
+            },
+        );
+    }
+
+    fn tile(&mut self, ui: &mut egui::Ui, entry: &AssetEntry) {
+        let selected = self.active == Some(entry.rel_path.as_str());
+        let (rect, response) = ui.allocate_exact_size(GRID_CELL, Sense::click());
+        let fill = if selected {
+            Some(ui.visuals().selection.bg_fill)
+        } else if response.hovered() {
+            Some(ui.visuals().widgets.hovered.weak_bg_fill)
+        } else {
+            None
+        };
+        if let Some(fill) = fill {
+            ui.painter()
+                .rect_filled(rect.shrink(2.0), theme::RADIUS, fill);
+        }
+        let thumb = Rect::from_center_size(
+            pos2(rect.center().x, rect.top() + 6.0 + GRID_THUMB / 2.0),
+            vec2(GRID_THUMB, GRID_THUMB),
+        );
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(thumb));
+        let glyph = icons::asset(entry.kind);
+        if entry.kind == AssetKind::Texture {
+            self.thumbs
+                .show(&mut child, self.pack, &entry.rel_path, GRID_THUMB, glyph);
+        } else {
+            child.add_sized(
+                [GRID_THUMB, GRID_THUMB],
+                egui::Label::new(RichText::new(glyph).size(GRID_THUMB * 0.7).weak())
+                    .selectable(false),
+            );
+        }
+        let label_rect = Rect::from_min_max(
+            pos2(rect.left() + 3.0, thumb.bottom() + 2.0),
+            pos2(rect.right() - 3.0, rect.bottom() - 2.0),
+        );
+        let mut label_ui = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(label_rect)
+                .layout(egui::Layout::top_down(egui::Align::Center)),
+        );
+        let name = entry.file_name();
+        let stem = name.rsplit_once('.').map_or(name, |(stem, _)| stem);
+        label_ui.add(
+            egui::Label::new(
+                RichText::new(stem)
+                    .small()
+                    .color(widgets::row_text_color(ui, selected)),
+            )
+            .selectable(false)
+            .truncate(),
+        );
+        if response.clicked() {
+            self.actions.push(Action::Open(entry.rel_path.clone()));
+        }
+        response.context_menu(|ui| self.file_menu(ui, entry));
+        response.on_hover_text(&entry.rel_path);
+    }
+
     fn file(&mut self, ui: &mut egui::Ui, entry: &AssetEntry, label: &str, depth: usize) {
         let selected = self.active == Some(entry.rel_path.as_str());
         let (rect, response) = widgets::list_row(ui, selected);
@@ -447,7 +647,13 @@ impl Explorer<'_> {
         if response.clicked() {
             self.actions.push(Action::Open(entry.rel_path.clone()));
         }
-        response.context_menu(|ui| {
+        response.context_menu(|ui| self.file_menu(ui, entry));
+        response.on_hover_text(&entry.rel_path);
+    }
+
+    /// The right-click menu of a file.
+    fn file_menu(&mut self, ui: &mut egui::Ui, entry: &AssetEntry) {
+        {
             if ui
                 .button(widgets::icon_label(icons::FILE, "Open"))
                 .clicked()
@@ -484,8 +690,26 @@ impl Explorer<'_> {
             {
                 self.actions.push(Action::Reveal(entry.rel_path.clone()));
             }
-        });
-        response.on_hover_text(&entry.rel_path);
+            ui.separator();
+            if ui
+                .button(widgets::icon_label(icons::RENAME, "Rename or Move…"))
+                .clicked()
+            {
+                self.actions.push(Action::Rename(entry.rel_path.clone()));
+            }
+            if ui
+                .button(widgets::icon_label(icons::COPY, "Duplicate"))
+                .clicked()
+            {
+                self.actions.push(Action::Duplicate(entry.rel_path.clone()));
+            }
+            if ui
+                .button(widgets::icon_label(icons::TRASH, "Delete…"))
+                .clicked()
+            {
+                self.actions.push(Action::Delete(entry.rel_path.clone()));
+            }
+        }
     }
 }
 
@@ -592,9 +816,39 @@ mod tests {
     fn search_matches_any_part_of_the_path() {
         let (_dir, pack) = pack();
         let mut tree = Tree::build(&pack.index);
-        assert_eq!(tree.matches(&pack.index, " STONE ").len(), 2);
-        assert_eq!(tree.matches(&pack.index, "deep/").len(), 1);
-        assert!(tree.matches(&pack.index, "nothing").is_empty());
+        let all = Filter::default();
+        assert_eq!(tree.matches(&pack.index, " STONE ", &all).len(), 2);
+        assert_eq!(tree.matches(&pack.index, "deep/", &all).len(), 1);
+        assert!(tree.matches(&pack.index, "nothing", &all).is_empty());
+    }
+
+    #[test]
+    fn filters_narrow_by_kind_and_namespace() {
+        let (_dir, pack) = pack();
+        let mut tree = Tree::build(&pack.index);
+        let kind = |kind| Filter {
+            kind,
+            namespace: None,
+        };
+        let count = |tree: &mut Tree, search: &str, filter: &Filter| {
+            tree.matches(&pack.index, search, filter).len()
+        };
+        assert_eq!(count(&mut tree, "", &kind(KindFilter::Textures)), 3);
+        assert_eq!(count(&mut tree, "stone", &kind(KindFilter::Models)), 1);
+        assert_eq!(count(&mut tree, "", &kind(KindFilter::Sounds)), 1);
+        assert_eq!(count(&mut tree, "", &kind(KindFilter::Other)), 0);
+        let other = Filter {
+            kind: KindFilter::All,
+            namespace: Some("other".to_owned()),
+        };
+        assert!(other.is_active());
+        assert_eq!(count(&mut tree, "", &other), 1);
+        // Every asset is in exactly one of the specific kinds.
+        let total: usize = KindFilter::ALL[1..]
+            .iter()
+            .map(|k| count(&mut tree, "", &kind(*k)))
+            .sum();
+        assert_eq!(total, pack.index.entries.len());
     }
 
     #[test]

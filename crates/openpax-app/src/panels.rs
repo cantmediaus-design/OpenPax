@@ -435,12 +435,113 @@ impl App {
             let (fw, fh) = animation.frame_size(width, height);
             let count = animation.frame_count(width, height);
             ui.label(format!("{count} frames of {fw} × {fh} px"));
-            if let Some(frames) = &animation.frames {
-                ui.weak(format!(
-                    "Custom frame order with {} entries (edit the .mcmeta to change).",
-                    frames.len()
-                ));
+            ui.checkbox(&mut editor.onion_skin, "Onion skin")
+                .on_hover_text("Show each frame's previous frame faintly on the canvas");
+
+            // Playback order: which frame shows, for how long, in what order.
+            ui.add_space(SPACE_S);
+            let texture_id = editor.texture(ui.ctx()).id();
+            let columns = (width / fw).max(1);
+            let frame_uv = |i: u32| {
+                let (col, row) = (i % columns, i / columns);
+                Rect::from_min_max(
+                    pos2(
+                        (col * fw) as f32 / width as f32,
+                        (row * fh) as f32 / height as f32,
+                    ),
+                    pos2(
+                        ((col + 1) * fw) as f32 / width as f32,
+                        ((row + 1) * fh) as f32 / height as f32,
+                    ),
+                )
+            };
+            let mut sequence = animation.sequence(width, height);
+            let before = sequence.clone();
+            let mut selected = editor.timeline_selected.filter(|s| *s < sequence.len());
+            ui.horizontal(|ui| {
+                widgets::caption(ui, "PLAYBACK ORDER");
+                if animation.frames.is_some() {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .small_button("Plain order")
+                            .on_hover_text("Play every frame once, top to bottom")
+                            .clicked()
+                        {
+                            let time = animation.frametime.unwrap_or(1).max(1);
+                            sequence = (0..count).map(|i| (i, time)).collect();
+                            selected = None;
+                        }
+                    });
+                }
+            });
+            for (position, (index, time)) in sequence.iter_mut().enumerate() {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = SPACE_S;
+                    if ui
+                        .selectable_label(
+                            selected == Some(position),
+                            format!("{:>2}", position + 1),
+                        )
+                        .on_hover_text("Select this step to move, copy or remove it")
+                        .clicked()
+                    {
+                        selected = (selected != Some(position)).then_some(position);
+                    }
+                    let thumb = vec2(22.0, 22.0 * fh as f32 / fw as f32);
+                    ui.add(egui::Image::from_texture((texture_id, thumb)).uv(frame_uv(*index)));
+                    ui.add(
+                        egui::DragValue::new(index)
+                            .range(0..=count - 1)
+                            .prefix("frame "),
+                    )
+                    .on_hover_text("Which frame of the strip shows (0 is the top)");
+                    ui.add(egui::DragValue::new(time).range(1..=12000).suffix(" t"))
+                        .on_hover_text("How long it shows, in ticks (20 per second)");
+                });
             }
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
+                let has = selected.is_some();
+                let at = selected.unwrap_or(0);
+                if widgets::icon_button_enabled(ui, has && at > 0, icons::ARROW_UP, "Play earlier")
+                    .clicked()
+                {
+                    sequence.swap(at, at - 1);
+                    selected = Some(at - 1);
+                }
+                if widgets::icon_button_enabled(
+                    ui,
+                    has && at + 1 < sequence.len(),
+                    icons::ARROW_DOWN,
+                    "Play later",
+                )
+                .clicked()
+                {
+                    sequence.swap(at, at + 1);
+                    selected = Some(at + 1);
+                }
+                if widgets::icon_button_enabled(ui, has, icons::COPY, "Repeat this step").clicked()
+                {
+                    let step = sequence[at];
+                    sequence.insert(at + 1, step);
+                    selected = Some(at + 1);
+                }
+                if widgets::icon_button_enabled(
+                    ui,
+                    has && sequence.len() > 1,
+                    icons::TRASH,
+                    "Remove this step (the frame stays in the image)",
+                )
+                .clicked()
+                {
+                    sequence.remove(at);
+                    selected = None;
+                }
+            });
+            if sequence != before {
+                animation.set_sequence(&sequence, width, height);
+            }
+            editor.timeline_selected = selected;
             if width == fw {
                 ui.horizontal(|ui| {
                     if ui
@@ -544,6 +645,11 @@ impl App {
                     self.revert_pack_meta();
                 }
             });
+        }
+
+        ui.add_space(SPACE_M);
+        if let Some(action) = self.pack_icon_ui(ui) {
+            self.run_icon_action(action);
         }
     }
 }

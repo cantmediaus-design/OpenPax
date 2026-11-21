@@ -40,6 +40,14 @@ pub struct Settings {
     pub show_inspector: bool,
     /// Whether the navigation hint is shown over the 3D viewport.
     pub show_viewport_hint: bool,
+    /// Whether the explorer shows a thumbnail grid instead of the folder tree.
+    pub explorer_grid: bool,
+    /// Whether the first-run tour has been seen (finished or skipped).
+    pub tour_done: bool,
+    /// Whether confetti bursts when a pack is created or exported.
+    pub celebrations: bool,
+    /// Rebound keyboard shortcuts: command id to shortcuts like "Cmd+Shift+S".
+    pub shortcuts: std::collections::BTreeMap<String, Vec<String>>,
     pub tool: String,
     pub primary: Rgba,
     pub secondary: Rgba,
@@ -59,6 +67,10 @@ impl Default for Settings {
             show_explorer: true,
             show_inspector: true,
             show_viewport_hint: true,
+            explorer_grid: false,
+            tour_done: false,
+            celebrations: true,
+            shortcuts: std::collections::BTreeMap::new(),
             tool: String::new(),
             primary: [0; 4],
             secondary: [0; 4],
