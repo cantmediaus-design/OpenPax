@@ -376,13 +376,11 @@ impl TextureEditor {
                 .layers()
                 .iter()
                 .enumerate()
-                .map(|(index, layer)| {
+                .map(|(index, _)| {
+                    let pixels = self.doc.layer_image(index, self.doc.current_frame());
                     let image = egui::ColorImage::from_rgba_unmultiplied(
-                        [
-                            layer.pixels.width() as usize,
-                            layer.pixels.height() as usize,
-                        ],
-                        layer.pixels.data(),
+                        [pixels.width() as usize, pixels.height() as usize],
+                        pixels.data(),
                     );
                     let name = format!("layer{index}:{}", self.rel_path);
                     ctx.load_texture(name, image, TextureOptions::NEAREST)
@@ -635,11 +633,12 @@ impl TextureEditor {
         );
 
         if let Some(sel) = self.doc.selection() {
-            let rect = Rect::from_min_max(
-                to_screen(sel.x as f32, sel.y as f32),
-                to_screen((sel.x + sel.w) as f32, (sel.y + sel.h) as f32),
-            );
-            outline(&painter, rect, Color32::BLACK, Color32::WHITE);
+            for ((x0, y0), (x1, y1)) in sel.edges() {
+                let a = to_screen(x0 as f32, y0 as f32);
+                let b = to_screen(x1 as f32, y1 as f32);
+                painter.line_segment([a, b], Stroke::new(2.0, Color32::BLACK));
+                painter.line_segment([a, b], Stroke::new(1.0, Color32::WHITE));
+            }
         }
 
         // Tools.
@@ -714,11 +713,12 @@ impl TextureEditor {
         tools: &mut ToolState,
     ) {
         let secondary = button == PointerButton::Secondary;
-        let mut settings = tools.settings;
+        let mut settings = tools.settings.clone();
+        settings.secondary_button = secondary;
         if secondary {
             settings.color = tools.secondary;
         }
-        match self.doc.stroke_begin(tool, settings, at) {
+        match self.doc.stroke_begin(tool, &settings, at) {
             // The picker returns a colour instead of starting a stroke.
             Some(color) if color[3] != 0 => {
                 if secondary {
@@ -1048,7 +1048,7 @@ mod tests {
             color,
             ..Default::default()
         };
-        editor.doc.stroke_begin(ToolKind::Pencil, settings, at);
+        editor.doc.stroke_begin(ToolKind::Pencil, &settings, at);
         editor.doc.stroke_end();
     }
 

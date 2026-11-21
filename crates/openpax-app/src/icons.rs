@@ -15,6 +15,51 @@ pub const RECTANGLE: &str = "\u{E3F0}";
 pub const ELLIPSE: &str = "\u{E18A}";
 pub const SELECT: &str = "\u{E69A}";
 pub const MOVE: &str = "\u{E0A4}";
+pub const POLYGON: &str = "\u{E6D0}";
+pub const POLYLINE: &str = "\u{E39C}";
+pub const SHADE: &str = "\u{E566}";
+pub const DITHER: &str = "\u{E8C4}";
+pub const LASSO: &str = "\u{E69C}";
+pub const STAMP: &str = "\u{E596}";
+pub const BRUSH: &str = "\u{E6F0}";
+
+// Animation and timeline
+pub const PLAY: &str = "\u{E3D0}";
+pub const PAUSE: &str = "\u{E39E}";
+pub const STOP: &str = "\u{E46C}";
+pub const SKIP_BACK: &str = "\u{E5A4}";
+pub const SKIP_FORWARD: &str = "\u{E5A6}";
+pub const REPEAT: &str = "\u{E3F6}";
+pub const LINK: &str = "\u{E2E2}";
+pub const UNLINK: &str = "\u{E2E4}";
+pub const TAG: &str = "\u{E478}";
+pub const CLOCK: &str = "\u{E19A}";
+pub const GHOST: &str = "\u{E62A}";
+
+// Editing
+pub const LOCK: &str = "\u{E2FA}";
+pub const UNLOCK: &str = "\u{E306}";
+pub const CROP: &str = "\u{E1D4}";
+pub const CROSSHAIR: &str = "\u{E1D6}";
+pub const RULER: &str = "\u{E6B8}";
+pub const TARGET: &str = "\u{E47C}";
+pub const DESELECT: &str = "\u{E69E}";
+pub const DROP: &str = "\u{E210}";
+pub const DIAMOND: &str = "\u{E1EC}";
+pub const ANCHOR: &str = "\u{E514}";
+pub const SLIDERS: &str = "\u{E434}";
+pub const CONTRAST: &str = "\u{E18E}";
+pub const SHAPES: &str = "\u{EC5E}";
+pub const SQUARE: &str = "\u{E45E}";
+pub const IMAGES: &str = "\u{E836}";
+pub const HISTORY: &str = "\u{E1A0}";
+pub const DOWNLOAD: &str = "\u{E20A}";
+pub const UPLOAD: &str = "\u{E4BE}";
+pub const GEAR: &str = "\u{E270}";
+pub const TERMINAL: &str = "\u{E47E}";
+pub const SCRIPT: &str = "\u{EB7A}";
+pub const BUG: &str = "\u{E5F4}";
+pub const WARNING_CIRCLE: &str = "\u{E4E2}";
 
 // Actions
 pub const PLUS: &str = "\u{E3D4}";
@@ -101,6 +146,13 @@ pub fn tool(tool: ToolKind) -> &'static str {
         ToolKind::Ellipse => ELLIPSE,
         ToolKind::Select => SELECT,
         ToolKind::Move => MOVE,
+        ToolKind::Polyline => POLYLINE,
+        ToolKind::Polygon => POLYGON,
+        ToolKind::Shade => SHADE,
+        ToolKind::Dither => DITHER,
+        ToolKind::Lasso => LASSO,
+        ToolKind::MagicWand => MAGIC_WAND,
+        ToolKind::TileStamp => STAMP,
     }
 }
 

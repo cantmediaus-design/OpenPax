@@ -60,6 +60,8 @@ pub struct Settings {
     pub recent_colors: Vec<Rgba>,
     /// The options last used in the Optimize dialogs.
     pub optimize: crate::optimize::OptimizeSettings,
+    /// Every pixel tool option (newer than the individual fields above).
+    pub tool_settings: Option<ToolSettings>,
 }
 
 impl Default for Settings {
@@ -84,6 +86,7 @@ impl Default for Settings {
             palette: Vec::new(),
             recent_colors: Vec::new(),
             optimize: crate::optimize::OptimizeSettings::default(),
+            tool_settings: None,
         };
         settings.store_tools(&ToolState::default());
         settings
@@ -103,6 +106,7 @@ impl Settings {
         self.shape_filled = tools.settings.shape_filled;
         self.palette.clone_from(&tools.palette.colors);
         self.recent_colors.clone_from(&tools.recent);
+        self.tool_settings = Some(tools.settings.clone());
     }
 
     /// The tool state these settings describe.
@@ -113,13 +117,15 @@ impl Settings {
                 .into_iter()
                 .find(|t| t.name() == self.tool)
                 .unwrap_or(defaults.tool),
-            settings: ToolSettings {
-                color: self.primary,
-                size: self.brush_size.clamp(1, crate::editor::MAX_BRUSH),
-                mirror_x: self.mirror_x,
-                mirror_y: self.mirror_y,
-                fill_contiguous: self.fill_contiguous,
-                shape_filled: self.shape_filled,
+            settings: {
+                let mut s = self.tool_settings.clone().unwrap_or_default();
+                s.color = self.primary;
+                s.size = self.brush_size.clamp(1, crate::editor::MAX_BRUSH);
+                s.mirror_x = self.mirror_x;
+                s.mirror_y = self.mirror_y;
+                s.fill_contiguous = self.fill_contiguous;
+                s.shape_filled = self.shape_filled;
+                s
             },
             secondary: self.secondary,
             palette: if self.palette.is_empty() {

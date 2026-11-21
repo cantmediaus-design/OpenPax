@@ -792,7 +792,7 @@ impl App {
                     }
                 };
                 // Paste where the selection is, so copy + paste in place is a no-op move.
-                let at = doc.selection().map_or((0, 0), |r| (r.x, r.y));
+                let at = doc.selection_bounds().map_or((0, 0), |r| (r.x, r.y));
                 doc.paste(&image, at);
                 let (width, height) = (doc.width(), doc.height());
                 let cropped =

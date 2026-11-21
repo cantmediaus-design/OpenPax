@@ -366,6 +366,13 @@ impl Command {
                 ToolKind::Ellipse => keys![key(Key::O)],
                 ToolKind::Select => keys![key(Key::M)],
                 ToolKind::Move => keys![key(Key::V)],
+                ToolKind::Polyline => &[],
+                ToolKind::Polygon => keys![key(Key::P)],
+                ToolKind::Shade => keys![key(Key::H)],
+                ToolKind::Dither => keys![key(Key::D)],
+                ToolKind::Lasso => keys![key(Key::Q)],
+                ToolKind::MagicWand => keys![key(Key::W)],
+                ToolKind::TileStamp => keys![key(Key::T)],
             },
             Self::ImportZip
             | Self::LoadDefaultPack

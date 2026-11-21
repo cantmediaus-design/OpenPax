@@ -1,3 +1,5 @@
+use crate::blend::{BlendMode, blend_pixel};
+
 /// Straight (non-premultiplied) RGBA.
 pub type Rgba = [u8; 4];
 
@@ -233,31 +235,139 @@ impl Bitmap {
 
     /// Composites `src` over `self` (source-over, straight alpha) with an extra opacity factor.
     pub fn composite(&mut self, src: &Bitmap, opacity: f32) {
+        self.composite_blend(src, BlendMode::Normal, opacity, None);
+    }
+
+    /// Composites `src` over `self` with a blend mode. When `clip` is given, the source's
+    /// alpha is multiplied by the clip bitmap's alpha (clipping masks).
+    pub fn composite_blend(
+        &mut self,
+        src: &Bitmap,
+        mode: BlendMode,
+        opacity: f32,
+        clip: Option<&Bitmap>,
+    ) {
         assert_eq!((self.width, self.height), (src.width, src.height));
-        let opacity = opacity.clamp(0.0, 1.0);
-        for (d, s) in self
+        let clip = clip.filter(|c| (c.width, c.height) == (src.width, src.height));
+        for (i, (d, s)) in self
             .data
             .as_chunks_mut::<4>()
             .0
             .iter_mut()
             .zip(src.data.as_chunks::<4>().0)
+            .enumerate()
         {
-            let sa = f32::from(s[3]) / 255.0 * opacity;
-            if sa <= 0.0 {
+            if s[3] == 0 {
                 continue;
             }
-            if d[3] == 0 && opacity >= 1.0 || s[3] == 255 && opacity >= 1.0 {
-                d.copy_from_slice(s);
-                continue;
+            let mut s = *s;
+            if let Some(clip) = clip {
+                let ca = u16::from(clip.data[i * 4 + 3]);
+                s[3] = ((u16::from(s[3]) * ca + 127) / 255) as u8;
+                if s[3] == 0 {
+                    continue;
+                }
             }
-            let da = f32::from(d[3]) / 255.0;
-            let out_a = sa + da * (1.0 - sa);
-            for c in 0..3 {
-                let v = (f32::from(s[c]) * sa + f32::from(d[c]) * da * (1.0 - sa)) / out_a;
-                d[c] = v.round().clamp(0.0, 255.0) as u8;
-            }
-            d[3] = (out_a * 255.0).round().clamp(0.0, 255.0) as u8;
+            *d = blend_pixel(*d, s, mode, opacity);
         }
+    }
+
+    /// Pastes `src` with its top-left corner at `(x, y)`, overwriting (including transparent
+    /// pixels). Parts outside are cut off.
+    pub fn blit(&mut self, src: &Bitmap, x: i32, y: i32) {
+        for sy in 0..src.height as i32 {
+            for sx in 0..src.width as i32 {
+                if let Some(c) = src.get(sx, sy) {
+                    self.set(x + sx, y + sy, c);
+                }
+            }
+        }
+    }
+
+    /// Draws `src` over this bitmap at `(x, y)` (source-over).
+    pub fn draw(&mut self, src: &Bitmap, x: i32, y: i32) {
+        for sy in 0..src.height as i32 {
+            for sx in 0..src.width as i32 {
+                if let (Some(c), Some(d)) = (src.get(sx, sy), self.get(x + sx, y + sy)) {
+                    self.set(x + sx, y + sy, blend_pixel(d, c, BlendMode::Normal, 1.0));
+                }
+            }
+        }
+    }
+
+    /// The pixels inside `rect` (parts outside the bitmap come out transparent).
+    pub fn crop(&self, rect: Rect) -> Bitmap {
+        let mut out = Bitmap::new(rect.w.max(0) as u32, rect.h.max(0) as u32);
+        for y in 0..rect.h {
+            for x in 0..rect.w {
+                if let Some(c) = self.get(rect.x + x, rect.y + y) {
+                    out.set(x, y, c);
+                }
+            }
+        }
+        out
+    }
+
+    /// A copy with a new canvas size; the old top-left corner lands at `(dx, dy)`.
+    pub fn resized_offset(&self, width: u32, height: u32, dx: i32, dy: i32) -> Bitmap {
+        let mut out = Bitmap::new(width, height);
+        out.blit(self, dx, dy);
+        out
+    }
+
+    /// Rotated a quarter turn clockwise (or counter-clockwise).
+    pub fn rotated_90(&self, clockwise: bool) -> Bitmap {
+        let (w, h) = (self.width as i32, self.height as i32);
+        let mut out = Bitmap::new(self.height, self.width);
+        for y in 0..h {
+            for x in 0..w {
+                let c = self.get(x, y).unwrap_or(TRANSPARENT);
+                if clockwise {
+                    out.set(h - 1 - y, x, c);
+                } else {
+                    out.set(y, w - 1 - x, c);
+                }
+            }
+        }
+        out
+    }
+
+    pub fn rotated_180(&self) -> Bitmap {
+        self.flipped_horizontal().flipped_vertical()
+    }
+
+    /// The bounding box of non-transparent pixels.
+    pub fn opaque_bounds(&self) -> Option<Rect> {
+        let (mut x0, mut y0, mut x1, mut y1) = (i32::MAX, i32::MAX, i32::MIN, i32::MIN);
+        for y in 0..self.height as i32 {
+            for x in 0..self.width as i32 {
+                if self.get(x, y).is_some_and(|c| c[3] > 0) {
+                    x0 = x0.min(x);
+                    y0 = y0.min(y);
+                    x1 = x1.max(x);
+                    y1 = y1.max(y);
+                }
+            }
+        }
+        (x1 >= x0).then(|| Rect::new(x0, y0, x1 - x0 + 1, y1 - y0 + 1))
+    }
+
+    /// Whether every pixel is fully transparent.
+    pub fn is_clear(&self) -> bool {
+        self.data.as_chunks::<4>().0.iter().all(|p| p[3] == 0)
+    }
+
+    /// Applies `f` to every pixel.
+    pub fn map_pixels(&mut self, mut f: impl FnMut(i32, i32, Rgba) -> Rgba) {
+        let w = self.width as usize;
+        for (i, px) in self.data.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+            *px = f((i % w) as i32, (i / w) as i32, *px);
+        }
+    }
+
+    /// Every pixel as `[r, g, b, a]`, row by row.
+    pub fn pixels(&self) -> impl Iterator<Item = Rgba> + '_ {
+        self.data.as_chunks::<4>().0.iter().copied()
     }
 }
 
