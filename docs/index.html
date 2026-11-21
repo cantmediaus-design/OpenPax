@@ -216,6 +216,22 @@ table.crates td:last-child { color: var(--muted); }
 .shot img { display: block; width: 100%; height: auto; }
 .shot figcaption { margin-top: 14px; color: var(--muted); font-size: 15px; text-align: center; }
 
+/* download */
+.dl-hint { margin: 14px 0 0; font-size: 14px; color: var(--muted); }
+.dl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 16px; }
+.dl-card {
+  display: grid; justify-items: start; gap: 4px; padding: 22px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+  color: var(--text); transition: border-color .15s, transform .15s;
+}
+.dl-card:hover { text-decoration: none; border-color: var(--accent-2); transform: translateY(-2px); }
+.dl-card svg { width: 30px; height: 30px; color: var(--accent); margin-bottom: 8px; }
+.dl-card strong { font-size: 18px; }
+.dl-card span { color: var(--muted); font-size: 14px; }
+.dl-card.mine { border-color: var(--accent-2); box-shadow: 0 0 0 1px var(--accent-2) inset; }
+.dl-notes { margin: 28px 0 0; padding-left: 20px; color: var(--muted); font-size: 15px; display: grid; gap: 6px; }
+.dl-notes b { color: var(--text); }
+
 /* footer */
 footer { padding: 48px 0 64px; color: var(--muted); font-size: 14px; }
 footer .wrap { display: flex; flex-wrap: wrap; gap: 24px; justify-content: space-between; }
@@ -232,7 +248,8 @@ footer p { margin: 4px 0; }
       <a href="#features">Features</a>
       <a class="opt" href="#shortcuts">Shortcuts</a>
       <a class="opt" href="#roadmap">Roadmap</a>
-      <a href="#build">Build</a>
+      <a href="#download">Download</a>
+      <a class="opt" href="#build">Build</a>
       <a href="https://github.com/cantmediaus-design/OpenPax">GitHub</a>
     </div>
   </div>
@@ -245,12 +262,16 @@ footer p { margin: 4px 0; }
       <h1>The resource pack <span class="hl">studio</span>, in one app.</h1>
       <p class="lead">OpenPax is a desktop app for making Minecraft: Java Edition resource packs. You can manage the pack, draw textures, animate them and build block models in one window. It's written entirely in Rust.</p>
       <div class="ctas">
-        <a class="btn primary" href="https://github.com/cantmediaus-design/OpenPax">
+        <a class="btn primary" id="dl-hero" href="#download">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M12 3v12M6 10l6 6 6-6M4 21h16"/></svg>
+          <span id="dl-hero-label">Download</span>
+        </a>
+        <a class="btn" href="https://github.com/cantmediaus-design/OpenPax">
           <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
           View on GitHub
         </a>
-        <a class="btn" href="#build">Build from source</a>
       </div>
+      <p class="dl-hint" id="dl-hero-hint">Free for Windows, macOS and Linux. <a href="#download">All downloads</a></p>
       <div class="meta"><span>Windows · macOS · Linux</span><span>MIT / Apache-2.0</span><span>No Minecraft assets shipped</span></div>
     </div>
 
@@ -363,6 +384,38 @@ footer p { margin: 4px 0; }
       <li><div><h3>Pack tooling</h3><p>Validation, plus editors for blockstates, item definitions, language files, sounds and fonts, and multi-version overlays.</p></div></li>
       <li><div><h3>Bedrock Edition</h3><p>Support for Bedrock resource packs.</p></div></li>
     </ol>
+  </div>
+</section>
+
+<section id="download" class="alt">
+  <div class="wrap">
+    <div class="eyebrow">Get OpenPax</div>
+    <h2>Download</h2>
+    <p class="sub"><span id="dl-version">Pick your platform below.</span> Unpack the archive anywhere and run <code>openpax</code>; nothing needs installing. Each download also includes <code>openpax-cli</code>, the command-line tool.</p>
+    <div class="dl-grid">
+      <a class="dl-card" data-asset="windows-x86_64" href="https://github.com/cantmediaus-design/OpenPax/releases/latest">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 5.5l7.5-1v7H3zm8.5-1.2L21 3v8.5h-9.5zM3 12.5h7.5v7L3 18.5zm8.5 0H21V21l-9.5-1.3z"/></svg>
+        <strong>Windows</strong><span>64-bit · .zip</span>
+      </a>
+      <a class="dl-card" data-asset="macos-arm64" href="https://github.com/cantmediaus-design/OpenPax/releases/latest">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.4 12.6c0-2.4 2-3.5 2-3.6-1.1-1.6-2.8-1.8-3.4-1.8-1.4-.1-2.8.9-3.5.9s-1.8-.9-3-.8C7 7.3 5.5 8.2 4.7 9.6c-1.7 2.9-.4 7.2 1.2 9.5.8 1.1 1.7 2.4 2.9 2.4 1.2-.1 1.6-.8 3-.8s1.8.8 3 .7c1.3 0 2-1.1 2.8-2.3.9-1.3 1.2-2.5 1.3-2.6-.1 0-2.5-.9-2.5-3.9zM14.1 5.5c.6-.8 1.1-1.8 1-2.9-.9 0-2.1.6-2.7 1.4-.6.7-1.1 1.8-1 2.8 1 .1 2.1-.5 2.7-1.3z"/></svg>
+        <strong>macOS</strong><span>Apple silicon · .tar.gz</span>
+      </a>
+      <a class="dl-card" data-asset="macos-x86_64" href="https://github.com/cantmediaus-design/OpenPax/releases/latest">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.4 12.6c0-2.4 2-3.5 2-3.6-1.1-1.6-2.8-1.8-3.4-1.8-1.4-.1-2.8.9-3.5.9s-1.8-.9-3-.8C7 7.3 5.5 8.2 4.7 9.6c-1.7 2.9-.4 7.2 1.2 9.5.8 1.1 1.7 2.4 2.9 2.4 1.2-.1 1.6-.8 3-.8s1.8.8 3 .7c1.3 0 2-1.1 2.8-2.3.9-1.3 1.2-2.5 1.3-2.6-.1 0-2.5-.9-2.5-3.9zM14.1 5.5c.6-.8 1.1-1.8 1-2.9-.9 0-2.1.6-2.7 1.4-.6.7-1.1 1.8-1 2.8 1 .1 2.1-.5 2.7-1.3z"/></svg>
+        <strong>macOS</strong><span>Intel · .tar.gz</span>
+      </a>
+      <a class="dl-card" data-asset="linux-x86_64" href="https://github.com/cantmediaus-design/OpenPax/releases/latest">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M7 9l3 2.5L7 14M12 14h5M8 21h8"/></svg>
+        <strong>Linux</strong><span>x86_64 · .tar.gz</span>
+      </a>
+    </div>
+    <ul class="dl-notes">
+      <li><b>Windows:</b> SmartScreen may warn about an unrecognised app. Choose <i>More info → Run anyway</i>.</li>
+      <li><b>macOS:</b> the app isn't notarised yet. Run <code>xattr -d com.apple.quarantine openpax openpax-cli</code> once in the unpacked folder.</li>
+      <li><b>Linux:</b> needs GTK 3 (<code>libgtk-3-0</code>), which most desktops already have.</li>
+      <li>Checksums and older versions are on the <a href="https://github.com/cantmediaus-design/OpenPax/releases">releases page</a>.</li>
+    </ul>
   </div>
 </section>
 
@@ -527,6 +580,34 @@ footer p { margin: 4px 0; }
     tabs.forEach(b => b.setAttribute("aria-selected", String(b === t)));
     shotImg.src = shotLink.href = `img/${n}.webp`; shotImg.alt = alt; shotCap.textContent = cap;
   });
+
+  // downloads: link straight to the latest release's archives once one exists
+  (async () => {
+    const ua = navigator.userAgent, plat = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || "";
+    const os = /win/i.test(plat) || /Windows/.test(ua) ? "windows-x86_64"
+      : /mac/i.test(plat) || /Mac OS X/.test(ua) ? (/iPhone|iPad/.test(ua) ? null : "macos-arm64")
+      : /linux/i.test(plat) && !/Android/.test(ua) ? "linux-x86_64" : null;
+    const names = { "windows-x86_64": "Windows", "macos-arm64": "macOS", "linux-x86_64": "Linux" };
+    const cards = document.querySelectorAll(".dl-card");
+    cards.forEach(c => c.classList.toggle("mine", c.dataset.asset === os));
+    if (os) document.getElementById("dl-hero-label").textContent = "Download for " + names[os];
+    let rel;
+    try {
+      const r = await fetch("https://api.github.com/repos/cantmediaus-design/OpenPax/releases/latest", { headers: { Accept: "application/vnd.github+json" } });
+      if (!r.ok) return;
+      rel = await r.json();
+    } catch (_) { return; }
+    const urlFor = key => (rel.assets || []).find(a => a.name.includes("-" + key + "."))?.browser_download_url;
+    cards.forEach(c => { const u = urlFor(c.dataset.asset); if (u) c.href = u; });
+    document.getElementById("dl-version").textContent = `Latest version: ${rel.tag_name}.`;
+    const mine = os && urlFor(os);
+    if (mine) {
+      const hero = document.getElementById("dl-hero");
+      hero.href = mine;
+      document.getElementById("dl-hero-hint").innerHTML =
+        `${rel.tag_name} · ${os === "macos-arm64" ? "Apple silicon · " : ""}<a href="#download">Other platforms</a>`;
+    }
+  })();
 
   seed(); syncSw(); draw();
 })();
