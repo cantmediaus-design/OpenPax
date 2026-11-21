@@ -1,12 +1,18 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod app;
+mod commands;
 mod dialogs;
 mod editor;
 mod explorer;
+mod icons;
 mod model_editor;
 mod model_panels;
 mod panels;
+mod settings;
+mod theme;
+mod toasts;
+mod widgets;
 
 use eframe::egui;
 
@@ -16,7 +22,8 @@ fn main() -> eframe::Result {
         viewport: egui::ViewportBuilder::default()
             .with_title("OpenPax")
             .with_inner_size([1280.0, 800.0])
-            .with_min_inner_size([800.0, 500.0]),
+            .with_min_inner_size([900.0, 560.0])
+            .with_drag_and_drop(true),
         ..Default::default()
     };
     // `openpax <pack folder> [asset path...]` opens that pack (and those assets) on startup.

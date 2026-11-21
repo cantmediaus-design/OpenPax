@@ -19,8 +19,28 @@ building models and animating them. It is early software; see the roadmap for wh
   textures. Orbit, pan and zoom; click to select an element; add, duplicate and delete cubes;
   edit position, size, rotation, per-face texture, UV and texture rotation; manage texture
   variables; undo/redo. Right-click a model in the explorer to open it as text instead.
-- **Everything else** (blockstates, language files, ...) opens in a text editor with JSON
-  validation.
+- **Everything else** (blockstates, language files, ...) opens in a text editor with line
+  numbers, JSON validation that jumps to the problem, and one-click formatting.
+- **Interface**: dark and light themes (View → Theme), drag a pack folder, zip or PNG onto the
+  window to open or import it, and tool settings, colours and palette are remembered between
+  sessions.
+
+### Keyboard and mouse
+
+| Action | Shortcut |
+|---|---|
+| Save / Save All / Close Tab | Ctrl+S / Ctrl+Shift+S / Ctrl+W |
+| Undo / Redo | Ctrl+Z / Ctrl+Shift+Z or Ctrl+Y |
+| Search assets | Ctrl+F |
+| Show or hide the explorer / inspector | Ctrl+B / Ctrl+I |
+| Pixel tools | B pencil, E eraser, G fill, I picker, L line, R rectangle, O ellipse, M select, V move |
+| Brush size / swap colours | `[` and `]` / X |
+| Zoom in / out / fit | Ctrl+= / Ctrl+- / Ctrl+0 |
+| Deselect or cancel a stroke | Escape |
+
+In the pixel editor the left button paints with the primary colour and the right button with
+the secondary; hold Alt to pick a colour from the canvas. Middle-drag or Space-drag pans.
+Every shortcut is also shown next to its menu entry (on macOS, Ctrl is Cmd).
 
 OpenPax never rewrites files you did not change, and keeps JSON fields it does not understand.
 Layers are stored in a `.openpax` folder inside the pack; the PNG Minecraft reads stays a normal

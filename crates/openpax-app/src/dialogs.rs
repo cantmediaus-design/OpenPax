@@ -1,19 +1,23 @@
-//! Modal dialogs: new pack, new texture, canvas resize, unsaved-changes prompts, messages.
+//! Modal dialogs: new pack, new texture, new model, canvas resize and unsaved-changes prompts.
+//!
+//! Dialogs are for decisions and forms. Errors and other notices go through
+//! [`App::notify`](crate::app::App::notify) instead, so they never replace an open dialog.
 
-use eframe::egui;
+use std::path::PathBuf;
+
+use eframe::egui::{self, Key, RichText};
 use openpax_core::{Pack, RESOURCE_FORMATS, ResourceLocation, version_for_format};
 use openpax_model::{Element, ModelFile};
 use openpax_paint::Bitmap;
 
 use crate::app::{App, texture_mut};
+use crate::theme::{self, DIALOG_WIDTH, SPACE_L, SPACE_M, SPACE_S};
+use crate::{icons, widgets};
 
 const MAX_TEXTURE_SIDE: u32 = 4096;
+const LOCATION_RULE: &str = "Use lowercase letters, digits, _ - . and / only.";
 
-#[derive(Default)]
 pub enum Dialog {
-    #[default]
-    None,
-    Message(String),
     NewPack {
         name: String,
         description: String,
@@ -24,6 +28,8 @@ pub enum Dialog {
         path: String,
         width: u32,
         height: u32,
+        /// An existing PNG to import instead of starting from a blank canvas.
+        source: Option<PathBuf>,
     },
     NewModel {
         namespace: String,
@@ -40,6 +46,32 @@ pub enum Dialog {
     },
 }
 
+/// `folder/name`, or just `name` at the top of the category.
+fn join_path(folder: &str, name: &str) -> String {
+    if folder.is_empty() {
+        name.to_owned()
+    } else {
+        format!("{folder}/{name}")
+    }
+}
+
+/// Turns a file name into something valid inside a resource location.
+fn sanitize_name(name: &str) -> String {
+    let cleaned: String = name
+        .to_lowercase()
+        .chars()
+        .map(|c| match c {
+            'a'..='z' | '0'..='9' | '_' | '-' | '.' => c,
+            _ => '_',
+        })
+        .collect();
+    if cleaned.is_empty() {
+        "texture".to_owned()
+    } else {
+        cleaned
+    }
+}
+
 impl Dialog {
     pub fn new_pack() -> Self {
         Self::NewPack {
@@ -50,18 +82,42 @@ impl Dialog {
     }
 
     pub fn new_model() -> Self {
+        Self::new_model_in("minecraft", "block")
+    }
+
+    pub fn new_model_in(namespace: &str, folder: &str) -> Self {
         Self::NewModel {
-            namespace: "minecraft".to_owned(),
-            path: "block/my_model".to_owned(),
+            namespace: namespace.to_owned(),
+            path: join_path(folder, "my_model"),
         }
     }
 
     pub fn new_texture() -> Self {
+        Self::new_texture_in("minecraft", "block")
+    }
+
+    pub fn new_texture_in(namespace: &str, folder: &str) -> Self {
         Self::NewTexture {
-            namespace: "minecraft".to_owned(),
-            path: "block/my_texture".to_owned(),
+            namespace: namespace.to_owned(),
+            path: join_path(folder, "my_texture"),
             width: 16,
             height: 16,
+            source: None,
+        }
+    }
+
+    /// Adds an existing PNG file to the pack as a texture.
+    pub fn import_texture(source: PathBuf) -> Self {
+        let stem = source
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        Self::NewTexture {
+            namespace: "minecraft".to_owned(),
+            path: join_path("block", &sanitize_name(&stem)),
+            width: 16,
+            height: 16,
+            source: Some(source),
         }
     }
 }
@@ -82,62 +138,132 @@ pub(crate) fn format_picker(ui: &mut egui::Ui, format: &mut u32) {
                 ui.selectable_value(format, *number, format!("{version}  (format {number})"));
             }
         });
-    ui.add(egui::DragValue::new(format).range(1..=9999));
+    ui.add(egui::DragValue::new(format).range(1..=9999))
+        .on_hover_text("Pack format number");
+}
+
+fn header(ui: &mut egui::Ui, glyph: &str, title: &str) {
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(glyph).size(22.0).color(theme::of(ui).accent));
+        ui.heading(title);
+    });
+    ui.add_space(SPACE_M);
+}
+
+/// The button row of a dialog. Returns `(confirmed, cancelled)`; Enter confirms.
+fn footer(ui: &mut egui::Ui, primary: &str, enabled: bool) -> (bool, bool) {
+    ui.add_space(SPACE_L);
+    let enter = enabled && ui.input(|i| i.key_pressed(Key::Enter));
+    let (mut confirm, mut cancel) = (false, false);
+    egui::Sides::new().show(
+        ui,
+        |_| {},
+        |ui| {
+            confirm = widgets::primary_button(ui, enabled, primary).clicked();
+            cancel = widgets::secondary_button(ui, "Cancel").clicked();
+        },
+    );
+    (confirm || enter, cancel)
+}
+
+fn form(ui: &mut egui::Ui, id: &str, add_rows: impl FnOnce(&mut egui::Ui)) {
+    egui::Grid::new(id)
+        .num_columns(2)
+        .spacing([SPACE_L, SPACE_M])
+        .show(ui, add_rows);
+}
+
+/// A full-width text field in a form row; focused when the dialog first appears.
+fn text_row(ui: &mut egui::Ui, label: &str, text: &mut String, focus: bool) {
+    ui.label(label);
+    let response = ui.add(egui::TextEdit::singleline(text).desired_width(f32::INFINITY));
+    if focus {
+        response.request_focus();
+    }
+    ui.end_row();
+}
+
+fn size_row(ui: &mut egui::Ui, width: &mut u32, height: &mut u32) {
+    ui.label("Size");
+    ui.horizontal(|ui| {
+        ui.add(
+            egui::DragValue::new(width)
+                .range(1..=MAX_TEXTURE_SIDE)
+                .suffix(" px"),
+        );
+        ui.label("×");
+        ui.add(
+            egui::DragValue::new(height)
+                .range(1..=MAX_TEXTURE_SIDE)
+                .suffix(" px"),
+        );
+        for side in [16, 32, 64] {
+            if ui.small_button(side.to_string()).clicked() {
+                (*width, *height) = (side, side);
+            }
+        }
+    });
+    ui.end_row();
+}
+
+fn problem(ui: &mut egui::Ui, text: &str) {
+    ui.add_space(SPACE_S);
+    let color = ui.visuals().warn_fg_color;
+    ui.horizontal(|ui| {
+        ui.label(widgets::icon(icons::WARNING).color(color));
+        ui.colored_label(color, text);
+    });
 }
 
 impl App {
     pub(crate) fn show_dialog(&mut self, ctx: &egui::Context) {
-        let mut dialog = std::mem::take(&mut self.dialog);
-        if matches!(dialog, Dialog::None) {
+        let Some(mut dialog) = self.dialogs.pop() else {
             return;
-        }
+        };
+        // Position in the stack; a dialog opened from this one goes on top of it.
+        let depth = self.dialogs.len();
+        let fresh = std::mem::take(&mut self.dialog_fresh);
         let mut done = false;
-        let modal = egui::Modal::new(egui::Id::unique("openpax_dialog")).show(ctx, |ui| {
-            ui.set_width(380.0);
+        let modal = egui::Modal::new(egui::Id::unique(("openpax_dialog", depth))).show(ctx, |ui| {
+            ui.set_width(DIALOG_WIDTH);
             done = match &mut dialog {
-                Dialog::None => true,
-                Dialog::Message(text) => {
-                    ui.label(text.as_str());
-                    ui.add_space(8.0);
-                    ui.button("OK").clicked()
-                }
                 Dialog::NewPack {
                     name,
                     description,
                     format,
-                } => self.new_pack_dialog(ui, name, description, format),
+                } => self.new_pack_dialog(ui, fresh, name, description, format),
                 Dialog::NewTexture {
                     namespace,
                     path,
                     width,
                     height,
-                } => self.new_texture_dialog(ui, namespace, path, width, height),
-                Dialog::NewModel { namespace, path } => self.new_model_dialog(ui, namespace, path),
+                    source,
+                } => self.new_texture_dialog(ui, fresh, namespace, path, width, height, source),
+                Dialog::NewModel { namespace, path } => {
+                    self.new_model_dialog(ui, fresh, namespace, path)
+                }
                 Dialog::Resize { width, height } => self.resize_dialog(ui, width, height),
                 Dialog::ConfirmClose { ids, quit } => self.confirm_close_dialog(ui, ids, *quit),
             };
         });
-        // An action may have replaced the dialog (e.g. with an error message); that one wins.
-        if !done && !modal.should_close() && matches!(self.dialog, Dialog::None) {
-            self.dialog = dialog;
+        // Escape or a click outside cancels.
+        if !done && !modal.should_close() {
+            self.dialogs.insert(depth, dialog);
         }
     }
 
     fn new_pack_dialog(
         &mut self,
         ui: &mut egui::Ui,
+        fresh: bool,
         name: &mut String,
         description: &mut String,
         format: &mut u32,
     ) -> bool {
-        ui.heading("New Resource Pack");
-        egui::Grid::new("new_pack").num_columns(2).show(ui, |ui| {
-            ui.label("Folder name");
-            ui.text_edit_singleline(name);
-            ui.end_row();
-            ui.label("Description");
-            ui.text_edit_singleline(description);
-            ui.end_row();
+        header(ui, icons::FOLDER_PLUS, "New Resource Pack");
+        form(ui, "new_pack", |ui| {
+            text_row(ui, "Folder name", name, fresh);
+            text_row(ui, "Description", description, false);
             ui.label("Game version");
             ui.horizontal(|ui| format_picker(ui, format));
             ui.end_row();
@@ -145,144 +271,142 @@ impl App {
         let name_ok = !name.trim().is_empty()
             && !name.contains(['/', '\\', ':', '*', '?', '"', '<', '>', '|']);
         if !name_ok {
-            ui.colored_label(ui.visuals().warn_fg_color, "Enter a valid folder name.");
+            problem(ui, "Enter a valid folder name.");
         }
-        ui.add_space(8.0);
-        let mut done = false;
-        ui.horizontal(|ui| {
-            if ui
-                .add_enabled(name_ok, egui::Button::new("Choose Location and Create…"))
-                .clicked()
-                && let Some(parent) = rfd::FileDialog::new()
-                    .set_title("Create the pack folder inside…")
-                    .pick_folder()
-            {
-                let root = parent.join(name.trim());
-                match Pack::create(&root, description, *format) {
-                    Ok(_) => self.open_pack(root),
-                    Err(e) => self.message(format!("Could not create pack:\n{e}")),
-                }
-                done = true;
+        let (confirm, cancel) = footer(ui, "Choose Location…", name_ok);
+        if confirm
+            && let Some(parent) = rfd::FileDialog::new()
+                .set_title("Create the pack folder inside…")
+                .pick_folder()
+        {
+            let root = parent.join(name.trim());
+            match Pack::create(&root, description, *format) {
+                Ok(_) => self.open_pack(root),
+                Err(e) => self.error(format!("Could not create pack:\n{e}")),
             }
-            done |= ui.button("Cancel").clicked();
-        });
-        done
+            return true;
+        }
+        cancel
     }
 
+    #[expect(clippy::too_many_arguments)]
     fn new_texture_dialog(
         &mut self,
         ui: &mut egui::Ui,
+        fresh: bool,
         namespace: &mut String,
         path: &mut String,
         width: &mut u32,
         height: &mut u32,
+        source: &Option<PathBuf>,
     ) -> bool {
-        ui.heading("New Texture");
-        egui::Grid::new("new_texture")
-            .num_columns(2)
-            .show(ui, |ui| {
-                ui.label("Namespace");
-                ui.text_edit_singleline(namespace);
-                ui.end_row();
-                ui.label("Path");
-                ui.text_edit_singleline(path);
-                ui.end_row();
-                ui.label("Size");
-                ui.horizontal(|ui| {
-                    ui.add(egui::DragValue::new(width).range(1..=MAX_TEXTURE_SIDE));
-                    ui.label("×");
-                    ui.add(egui::DragValue::new(height).range(1..=MAX_TEXTURE_SIDE));
-                });
-                ui.end_row();
-            });
-        let location = ResourceLocation::new(namespace, path);
-        let rel_path = format!("assets/{namespace}/textures/{path}.png");
-        match &location {
-            Ok(_) => ui.weak(&rel_path),
-            Err(_) => ui.colored_label(
-                ui.visuals().warn_fg_color,
-                "Use lowercase letters, digits, _ - . and / only.",
-            ),
-        };
-        ui.add_space(8.0);
-        let mut done = false;
-        ui.horizontal(|ui| {
-            if ui
-                .add_enabled(location.is_ok(), egui::Button::new("Create"))
-                .clicked()
-            {
-                self.create_texture(&rel_path, *width, *height);
-                done = true;
+        match source {
+            Some(_) => header(ui, icons::IMAGE, "Import Texture"),
+            None => header(ui, icons::IMAGE, "New Texture"),
+        }
+        if let Some(source) = source {
+            ui.label(
+                RichText::new(source.display().to_string())
+                    .monospace()
+                    .weak(),
+            );
+            ui.add_space(SPACE_S);
+        }
+        form(ui, "new_texture", |ui| {
+            text_row(ui, "Namespace", namespace, false);
+            text_row(ui, "Path", path, fresh);
+            if source.is_none() {
+                size_row(ui, width, height);
             }
-            done |= ui.button("Cancel").clicked();
         });
-        done
+        let rel_path = format!("assets/{namespace}/textures/{path}.png");
+        let valid = self.location_feedback(ui, namespace, path, &rel_path);
+        let action = if source.is_some() { "Import" } else { "Create" };
+        let (confirm, cancel) = footer(ui, action, valid);
+        if confirm {
+            self.create_texture(&rel_path, *width, *height, source.as_deref());
+            return true;
+        }
+        cancel
     }
 
-    fn create_texture(&mut self, rel_path: &str, width: u32, height: u32) {
-        let Some(pack) = &self.pack else { return };
-        if pack.exists(rel_path) {
-            self.message(format!("{rel_path} already exists."));
-            return;
+    /// Shows where a new asset will be written, or why it cannot be. Returns whether it can.
+    fn location_feedback(
+        &self,
+        ui: &mut egui::Ui,
+        namespace: &str,
+        path: &str,
+        rel_path: &str,
+    ) -> bool {
+        if ResourceLocation::new(namespace, path).is_err() {
+            problem(ui, LOCATION_RULE);
+            return false;
         }
-        let result = openpax_paint::encode_png(&Bitmap::new(width, height))
-            .map_err(|e| e.to_string())
-            .and_then(|png| pack.write(rel_path, &png).map_err(|e| e.to_string()));
+        if self.pack.as_ref().is_some_and(|p| p.exists(rel_path)) {
+            problem(ui, "A file with this name already exists.");
+            return false;
+        }
+        ui.add_space(SPACE_S);
+        ui.label(RichText::new(rel_path).monospace().weak());
+        true
+    }
+
+    fn create_texture(
+        &mut self,
+        rel_path: &str,
+        width: u32,
+        height: u32,
+        source: Option<&std::path::Path>,
+    ) {
+        let Some(pack) = &self.pack else { return };
+        let png = match source {
+            // Decode first so that only real PNG files end up in the pack.
+            Some(source) => std::fs::read(source)
+                .map_err(|e| e.to_string())
+                .and_then(|bytes| {
+                    openpax_paint::decode_png(&bytes)
+                        .map(|_| bytes)
+                        .map_err(|e| e.to_string())
+                }),
+            None => {
+                openpax_paint::encode_png(&Bitmap::new(width, height)).map_err(|e| e.to_string())
+            }
+        };
+        let result = png.and_then(|png| pack.write(rel_path, &png).map_err(|e| e.to_string()));
         match result {
             Ok(()) => {
                 self.rescan();
                 self.open_asset(rel_path);
             }
-            Err(e) => self.message(format!("Could not create texture:\n{e}")),
+            Err(e) => self.error(format!("Could not create texture:\n{e}")),
         }
     }
 
     fn new_model_dialog(
         &mut self,
         ui: &mut egui::Ui,
+        fresh: bool,
         namespace: &mut String,
         path: &mut String,
     ) -> bool {
-        ui.heading("New Model");
-        egui::Grid::new("new_model").num_columns(2).show(ui, |ui| {
-            ui.label("Namespace");
-            ui.text_edit_singleline(namespace);
-            ui.end_row();
-            ui.label("Path");
-            ui.text_edit_singleline(path);
-            ui.end_row();
+        header(ui, icons::CUBE, "New Model");
+        form(ui, "new_model", |ui| {
+            text_row(ui, "Namespace", namespace, false);
+            text_row(ui, "Path", path, fresh);
         });
-        let location = ResourceLocation::new(namespace, path);
         let rel_path = format!("assets/{namespace}/models/{path}.json");
-        match &location {
-            Ok(_) => ui.weak(&rel_path),
-            Err(_) => ui.colored_label(
-                ui.visuals().warn_fg_color,
-                "Use lowercase letters, digits, _ - . and / only.",
-            ),
-        };
+        let valid = self.location_feedback(ui, namespace, path, &rel_path);
         ui.weak("Starts as one full-block cube using texture variable #0.");
-        ui.add_space(8.0);
-        let mut done = false;
-        ui.horizontal(|ui| {
-            if ui
-                .add_enabled(location.is_ok(), egui::Button::new("Create"))
-                .clicked()
-            {
-                self.create_model(&rel_path);
-                done = true;
-            }
-            done |= ui.button("Cancel").clicked();
-        });
-        done
+        let (confirm, cancel) = footer(ui, "Create", valid);
+        if confirm {
+            self.create_model(&rel_path);
+            return true;
+        }
+        cancel
     }
 
     fn create_model(&mut self, rel_path: &str) {
         let Some(pack) = &self.pack else { return };
-        if pack.exists(rel_path) {
-            self.message(format!("{rel_path} already exists."));
-            return;
-        }
         let mut model = ModelFile::default();
         model
             .textures
@@ -294,61 +418,120 @@ impl App {
                 self.rescan();
                 self.open_asset(rel_path);
             }
-            Err(e) => self.message(format!("Could not create model:\n{e}")),
+            Err(e) => self.error(format!("Could not create model:\n{e}")),
         }
     }
 
     fn resize_dialog(&mut self, ui: &mut egui::Ui, width: &mut u32, height: &mut u32) -> bool {
-        ui.heading("Resize Canvas");
-        ui.horizontal(|ui| {
-            ui.add(egui::DragValue::new(width).range(1..=MAX_TEXTURE_SIDE));
-            ui.label("×");
-            ui.add(egui::DragValue::new(height).range(1..=MAX_TEXTURE_SIDE));
-        });
+        header(ui, icons::RESIZE, "Resize Canvas");
+        form(ui, "resize", |ui| size_row(ui, width, height));
+        ui.add_space(SPACE_S);
         ui.weak("The top-left corner stays in place; pixels outside the new size are cropped.");
-        ui.add_space(8.0);
-        let mut done = false;
-        ui.horizontal(|ui| {
-            if ui.button("Resize").clicked() {
-                if let Some(editor) = texture_mut(&mut self.editors, self.active) {
-                    editor.doc.resize_canvas(*width, *height);
-                    editor.fit_pending = true;
-                }
-                done = true;
+        let (confirm, cancel) = footer(ui, "Resize", true);
+        if confirm {
+            if let Some(editor) = texture_mut(&mut self.editors, self.active) {
+                editor.doc.resize_canvas(*width, *height);
+                editor.fit_pending = true;
             }
-            done |= ui.button("Cancel").clicked();
-        });
-        done
+            return true;
+        }
+        cancel
     }
 
     fn confirm_close_dialog(&mut self, ui: &mut egui::Ui, ids: &[u64], quit: bool) -> bool {
-        ui.heading("Unsaved Changes");
-        ui.label("These files have unsaved changes:");
-        for id in ids {
-            if let Some(editor) = self.editors.get(id) {
-                ui.monospace(editor.rel_path());
-            }
-        }
-        ui.add_space(8.0);
-        let mut done = false;
-        ui.horizontal(|ui| {
-            let save = ui.button("Save").clicked();
-            let discard = ui.button("Discard").clicked();
-            done = ui.button("Cancel").clicked();
-            if save || discard {
-                done = true;
-                if save && !ids.iter().all(|id| self.save_editor(*id)) {
-                    return; // the failure is shown in its own dialog; keep the tabs open
-                }
-                for id in ids {
-                    self.close_editor(*id);
-                }
-                if quit {
-                    self.allow_quit = true;
-                    ui.send_viewport_cmd(egui::ViewportCommand::Close);
-                }
-            }
+        header(ui, icons::WARNING, "Unsaved Changes");
+        let pack_meta = quit && self.pack_dirty();
+        let count = ids.len() + usize::from(pack_meta);
+        ui.label(if count == 1 {
+            "This file has unsaved changes:".to_owned()
+        } else {
+            format!("These {count} files have unsaved changes:")
         });
-        done
+        ui.add_space(SPACE_S);
+        egui::ScrollArea::vertical()
+            .max_height(160.0)
+            .show(ui, |ui| {
+                for id in ids {
+                    if let Some(editor) = self.editors.get(id) {
+                        ui.monospace(editor.rel_path());
+                    }
+                }
+                if pack_meta {
+                    ui.monospace("pack.mcmeta");
+                }
+            });
+
+        ui.add_space(SPACE_L);
+        let enter = ui.input(|i| i.key_pressed(Key::Enter));
+        let (mut save, mut discard, mut cancel) = (false, false, false);
+        egui::Sides::new().show(
+            ui,
+            |ui| {
+                discard = widgets::secondary_button(ui, "Don't Save")
+                    .on_hover_text("Close and lose the changes")
+                    .clicked();
+            },
+            |ui| {
+                let label = if count == 1 { "Save" } else { "Save All" };
+                save = widgets::primary_button(ui, true, label).clicked();
+                cancel = widgets::secondary_button(ui, "Cancel").clicked();
+            },
+        );
+        save |= enter;
+
+        if save || discard {
+            if save {
+                let saved = ids.iter().all(|id| self.save_editor(*id))
+                    && (!pack_meta || self.save_pack_meta());
+                if !saved {
+                    return true; // the failure is reported; keep the tabs open
+                }
+            } else if pack_meta {
+                self.revert_pack_meta();
+            }
+            for id in ids {
+                self.close_editor(*id);
+            }
+            if quit {
+                self.allow_quit = true;
+                ui.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            return true;
+        }
+        cancel
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn imported_file_names_become_valid_paths() {
+        assert_eq!(sanitize_name("My Cool Block (2)"), "my_cool_block__2_");
+        assert_eq!(sanitize_name(""), "texture");
+        let Dialog::NewTexture { path, source, .. } =
+            Dialog::import_texture(PathBuf::from("C:/art/Stone Bricks.PNG"))
+        else {
+            panic!("expected a texture dialog");
+        };
+        assert_eq!(path, "block/stone_bricks");
+        assert!(source.is_some());
+        assert!(ResourceLocation::new("minecraft", &path).is_ok());
+    }
+
+    #[test]
+    fn new_asset_dialogs_start_in_the_given_folder() {
+        let Dialog::NewTexture { path, .. } = Dialog::new_texture_in("ns", "") else {
+            panic!();
+        };
+        assert_eq!(path, "my_texture");
+        let Dialog::NewModel { namespace, path } = Dialog::new_model_in("ns", "item/tools") else {
+            panic!();
+        };
+        assert_eq!(
+            (namespace.as_str(), path.as_str()),
+            ("ns", "item/tools/my_model")
+        );
     }
 }
