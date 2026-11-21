@@ -1,0 +1,132 @@
+name: Release
+
+# Push a tag like `v0.1.0` to build every platform and publish a GitHub release.
+# Run it by hand (Actions → Release → Run workflow) to build the archives without publishing.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: build (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - name: linux-x86_64
+            # The oldest supported Ubuntu keeps the glibc requirement low.
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - name: macos-arm64
+            os: macos-latest
+            target: aarch64-apple-darwin
+          - name: macos-x86_64
+            os: macos-latest
+            target: x86_64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libxkbcommon-dev libwayland-dev libssl-dev pkg-config
+
+      - name: Check the tag matches the crate version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          version=$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"/\1/p' Cargo.toml)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match the workspace version $version in Cargo.toml"
+            exit 1
+          fi
+
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }} -p openpax-app -p openpax-cli
+
+      - name: Package
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then label="$GITHUB_REF_NAME"; else label="${GITHUB_SHA::7}"; fi
+          dir="openpax-$label-${{ matrix.name }}"
+          bin="target/${{ matrix.target }}/release"
+          mkdir "$dir"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cp "$bin/openpax.exe" "$bin/openpax-cli.exe" "$dir/"
+          else
+            cp "$bin/openpax" "$bin/openpax-cli" "$dir/"
+            strip "$dir/openpax" "$dir/openpax-cli" || true
+          fi
+          cp README.md LICENSE-MIT LICENSE-APACHE "$dir/"
+          cp crates/openpax-app/assets/Phosphor-LICENSE-MIT.txt "$dir/"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            archive="$dir.zip"
+            7z a -tzip "$archive" "$dir" > /dev/null
+          else
+            archive="$dir.tar.gz"
+            tar -czf "$archive" "$dir"
+          fi
+          echo "ARCHIVE=$archive" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ env.ARCHIVE }}
+          if-no-files-found: error
+
+  publish:
+    name: publish release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > notes.md <<'EOF'
+          ## Downloads
+
+          | Platform | File |
+          | --- | --- |
+          | Windows (64-bit) | `openpax-${{ github.ref_name }}-windows-x86_64.zip` |
+          | macOS (Apple silicon) | `openpax-${{ github.ref_name }}-macos-arm64.tar.gz` |
+          | macOS (Intel) | `openpax-${{ github.ref_name }}-macos-x86_64.tar.gz` |
+          | Linux (x86_64) | `openpax-${{ github.ref_name }}-linux-x86_64.tar.gz` |
+
+          Each archive holds `openpax` (the desktop app) and `openpax-cli` (the command-line tool).
+          Unpack it anywhere and run `openpax`; nothing needs installing.
+
+          - **Windows:** SmartScreen may warn about an unrecognised app. Choose *More info → Run anyway*.
+          - **macOS:** the binaries are not notarised. Run `xattr -d com.apple.quarantine openpax openpax-cli` in the unpacked folder once.
+          - **Linux:** needs GTK 3 (`libgtk-3-0`), which most desktops already have.
+
+          `SHA256SUMS.txt` lists the checksum of every archive.
+          EOF
+          prerelease=""
+          case "$GITHUB_REF_NAME" in v0.*|*-*) prerelease="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "OpenPax $GITHUB_REF_NAME" \
+            --notes-file notes.md --generate-notes $prerelease
