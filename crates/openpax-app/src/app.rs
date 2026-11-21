@@ -13,7 +13,9 @@ use crate::commands::{self, Active, Command};
 use crate::dialogs::Dialog;
 use crate::editor::{Editor, TextEditor, TextureEditor, ToolState};
 use crate::explorer::{self, Action, Explorer, Thumbnails, Tree};
+use crate::jobs::Job;
 use crate::model_editor::ModelEditor;
+use crate::remix_ui::{JobResult, RemixState, Versions};
 use crate::settings::{SETTINGS_KEY, Settings};
 use crate::theme::{self, SPACE_M, SPACE_S, SPACE_XL, SPACE_XXL, ThemeChoice};
 use crate::toasts::{Level, Toasts};
@@ -61,6 +63,12 @@ pub struct App {
     render_state: Option<eframe::egui_wgpu::RenderState>,
     /// Bumped on every save so viewports reload textures edited in other tabs.
     asset_generation: u64,
+    /// The background task in progress (download, remix), shown in a progress dialog.
+    pub(crate) job: Option<Job<JobResult>>,
+    /// Game versions offered by the default-pack and remix dialogs.
+    pub(crate) versions: Versions,
+    /// Versions whose default resources are already downloaded.
+    pub(crate) vanilla_cached: HashSet<String>,
 }
 
 /// The texture editor in the active tab, if that tab is a texture.
@@ -145,6 +153,9 @@ impl App {
             title_stale: true,
             render_state: cc.wgpu_render_state.clone(),
             asset_generation: 0,
+            job: None,
+            versions: Versions::Idle,
+            vanilla_cached: HashSet::new(),
         };
         // Open the pack given on the command line, else the last one if it is still there.
         if let Some(root) = initial_pack {
@@ -494,6 +505,14 @@ impl App {
             Command::NewPack => self.open_dialog(Dialog::new_pack()),
             Command::OpenPack => self.pick_and_open_pack(),
             Command::ImportZip => self.import_zip(None),
+            Command::LoadDefaultPack => {
+                self.request_versions(ctx);
+                self.open_dialog(Dialog::LoadDefault(Box::default()));
+            }
+            Command::Remix => {
+                self.request_versions(ctx);
+                self.open_dialog(Dialog::Remix(Box::new(RemixState::new())));
+            }
             Command::NewTexture => self.open_dialog(Dialog::new_texture()),
             Command::NewModel => self.open_dialog(Dialog::new_model()),
             Command::Save => {
@@ -618,7 +637,7 @@ impl App {
     // ---- input ----
 
     fn shortcuts(&mut self, ctx: &egui::Context) {
-        if !self.dialogs.is_empty() {
+        if !self.dialogs.is_empty() || self.job.is_some() {
             return;
         }
         let typing = ctx.text_edit_focused();
@@ -762,6 +781,8 @@ impl App {
                 self.menu_item(ui, Command::NewPack);
                 self.menu_item(ui, Command::OpenPack);
                 self.menu_item(ui, Command::ImportZip);
+                self.menu_item(ui, Command::LoadDefaultPack);
+                self.menu_item(ui, Command::Remix);
                 ui.menu_button(widgets::icon_label(icons::RECENT, "Open Recent"), |ui| {
                     if self.recent.is_empty() {
                         ui.weak("No recent packs");
@@ -1065,6 +1086,27 @@ impl App {
                     }
                 },
             );
+            ui.add_space(SPACE_M);
+            let row2_width = button.x * 2.0 + SPACE_M;
+            ui.allocate_ui_with_layout(
+                vec2(row2_width, button.y),
+                Layout::left_to_right(Align::Center),
+                |ui| {
+                    ui.spacing_mut().item_spacing.x = SPACE_M;
+                    for command in [Command::LoadDefaultPack, Command::Remix] {
+                        let label = command.label().trim_end_matches('…');
+                        let widget = egui::Button::new(widgets::icon_label(command.icon(), label))
+                            .min_size(button);
+                        if ui
+                            .add(widget)
+                            .on_hover_text(command.tooltip(&ctx))
+                            .clicked()
+                        {
+                            self.run(command, &ctx);
+                        }
+                    }
+                },
+            );
             ui.add_space(SPACE_S);
             ui.label(RichText::new("or drop a pack folder or zip onto this window").weak());
 
@@ -1181,6 +1223,7 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.thumbs.begin_frame();
+        self.poll_jobs();
         self.update_title(&ctx);
         self.close_requested(&ctx);
         self.dropped_files(&ctx);
@@ -1210,6 +1253,7 @@ impl eframe::App for App {
             .show(ui, |ui| self.central(ui));
 
         self.show_dialog(&ctx);
+        self.show_job(&ctx);
         self.toasts.show(&ctx, status.response.rect.height());
         Self::drop_overlay(&ctx);
     }

@@ -9,7 +9,9 @@ repository.workspace = true
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+sha1_smol.workspace = true
 thiserror.workspace = true
+ureq.workspace = true
 zip.workspace = true
 
 [dev-dependencies]

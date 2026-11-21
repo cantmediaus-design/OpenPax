@@ -20,6 +20,14 @@ pub enum Error {
     AlreadyExists(PathBuf),
     #[error("zip error: {0}")]
     Zip(#[from] zip::result::ZipError),
+    #[error("network error: {0}")]
+    Network(String),
+    #[error("{0} failed its integrity check (SHA-1 mismatch)")]
+    Integrity(String),
+    #[error("unexpected data: {0}")]
+    Format(String),
+    #[error("cancelled")]
+    Cancelled,
 }
 
 impl Error {

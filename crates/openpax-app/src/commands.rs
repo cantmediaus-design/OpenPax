@@ -14,6 +14,8 @@ pub enum Command {
     NewPack,
     OpenPack,
     ImportZip,
+    LoadDefaultPack,
+    Remix,
     NewTexture,
     NewModel,
     Save,
@@ -101,10 +103,12 @@ const fn cmd_shift(logical_key: Key) -> KeyboardShortcut {
 }
 
 impl Command {
-    const FIXED: [Self; 34] = [
+    const FIXED: [Self; 36] = [
         Self::NewPack,
         Self::OpenPack,
         Self::ImportZip,
+        Self::LoadDefaultPack,
+        Self::Remix,
         Self::NewTexture,
         Self::NewModel,
         Self::Save,
@@ -149,6 +153,8 @@ impl Command {
             Self::NewPack => "New Pack…",
             Self::OpenPack => "Open Pack Folder…",
             Self::ImportZip => "Import Pack Zip…",
+            Self::LoadDefaultPack => "Load Default Pack…",
+            Self::Remix => "Remix Packs…",
             Self::NewTexture => "New Texture…",
             Self::NewModel => "New Model…",
             Self::Save => "Save",
@@ -189,6 +195,8 @@ impl Command {
             Self::NewPack => icons::FOLDER_PLUS,
             Self::OpenPack => icons::FOLDER_OPEN,
             Self::ImportZip => icons::FILE_ZIP,
+            Self::LoadDefaultPack => icons::PACKAGE,
+            Self::Remix => icons::MERGE_DOWN,
             Self::NewTexture => icons::IMAGE,
             Self::NewModel => icons::CUBE,
             Self::Save | Self::SaveAll => icons::SAVE,
@@ -266,6 +274,8 @@ impl Command {
                 ToolKind::Move => keys![key(Key::V)],
             },
             Self::ImportZip
+            | Self::LoadDefaultPack
+            | Self::Remix
             | Self::NewModel
             | Self::Quit
             | Self::FlipHorizontal
@@ -285,6 +295,8 @@ impl Command {
             Self::NewPack
             | Self::OpenPack
             | Self::ImportZip
+            | Self::LoadDefaultPack
+            | Self::Remix
             | Self::Quit
             | Self::ToggleExplorer
             | Self::ToggleInspector => Needs::Nothing,

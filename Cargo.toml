@@ -20,6 +20,8 @@ thiserror = "2"
 image = { version = "0.25", default-features = false, features = ["png"] }
 zip = { version = "9", default-features = false, features = ["deflate"] }
 tempfile = "3"
+ureq = { version = "3.5", default-features = false, features = ["native-tls", "json"] }
+sha1_smol = "1"
 glam = "0.34"
 wgpu = "30"
 

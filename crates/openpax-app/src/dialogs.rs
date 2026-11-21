@@ -1,4 +1,5 @@
 //! Modal dialogs: new pack, new texture, new model, canvas resize and unsaved-changes prompts.
+//! The default-pack and remix dialogs live in [`crate::remix_ui`].
 //!
 //! Dialogs are for decisions and forms. Errors and other notices go through
 //! [`App::notify`](crate::app::App::notify) instead, so they never replace an open dialog.
@@ -11,9 +12,11 @@ use openpax_model::{Element, ModelFile};
 use openpax_paint::Bitmap;
 
 use crate::app::{App, texture_mut};
+use crate::remix_ui::{LoadDefaultState, RemixState};
 use crate::theme::{self, DIALOG_WIDTH, SPACE_L, SPACE_M, SPACE_S};
 use crate::{icons, widgets};
 
+const WIDE_DIALOG_WIDTH: f32 = 680.0;
 const MAX_TEXTURE_SIDE: u32 = 4096;
 const LOCATION_RULE: &str = "Use lowercase letters, digits, _ - . and / only.";
 
@@ -44,6 +47,8 @@ pub enum Dialog {
         ids: Vec<u64>,
         quit: bool,
     },
+    LoadDefault(Box<LoadDefaultState>),
+    Remix(Box<RemixState>),
 }
 
 /// `folder/name`, or just `name` at the top of the category.
@@ -142,7 +147,7 @@ pub(crate) fn format_picker(ui: &mut egui::Ui, format: &mut u32) {
         .on_hover_text("Pack format number");
 }
 
-fn header(ui: &mut egui::Ui, glyph: &str, title: &str) {
+pub(crate) fn header(ui: &mut egui::Ui, glyph: &str, title: &str) {
     ui.horizontal(|ui| {
         ui.label(RichText::new(glyph).size(22.0).color(theme::of(ui).accent));
         ui.heading(title);
@@ -151,7 +156,7 @@ fn header(ui: &mut egui::Ui, glyph: &str, title: &str) {
 }
 
 /// The button row of a dialog. Returns `(confirmed, cancelled)`; Enter confirms.
-fn footer(ui: &mut egui::Ui, primary: &str, enabled: bool) -> (bool, bool) {
+pub(crate) fn footer(ui: &mut egui::Ui, primary: &str, enabled: bool) -> (bool, bool) {
     ui.add_space(SPACE_L);
     let enter = enabled && ui.input(|i| i.key_pressed(Key::Enter));
     let (mut confirm, mut cancel) = (false, false);
@@ -166,7 +171,7 @@ fn footer(ui: &mut egui::Ui, primary: &str, enabled: bool) -> (bool, bool) {
     (confirm || enter, cancel)
 }
 
-fn form(ui: &mut egui::Ui, id: &str, add_rows: impl FnOnce(&mut egui::Ui)) {
+pub(crate) fn form(ui: &mut egui::Ui, id: &str, add_rows: impl FnOnce(&mut egui::Ui)) {
     egui::Grid::new(id)
         .num_columns(2)
         .spacing([SPACE_L, SPACE_M])
@@ -174,7 +179,7 @@ fn form(ui: &mut egui::Ui, id: &str, add_rows: impl FnOnce(&mut egui::Ui)) {
 }
 
 /// A full-width text field in a form row; focused when the dialog first appears.
-fn text_row(ui: &mut egui::Ui, label: &str, text: &mut String, focus: bool) {
+pub(crate) fn text_row(ui: &mut egui::Ui, label: &str, text: &mut String, focus: bool) {
     ui.label(label);
     let response = ui.add(egui::TextEdit::singleline(text).desired_width(f32::INFINITY));
     if focus {
@@ -206,7 +211,7 @@ fn size_row(ui: &mut egui::Ui, width: &mut u32, height: &mut u32) {
     ui.end_row();
 }
 
-fn problem(ui: &mut egui::Ui, text: &str) {
+pub(crate) fn problem(ui: &mut egui::Ui, text: &str) {
     ui.add_space(SPACE_S);
     let color = ui.visuals().warn_fg_color;
     ui.horizontal(|ui| {
@@ -225,7 +230,11 @@ impl App {
         let fresh = std::mem::take(&mut self.dialog_fresh);
         let mut done = false;
         let modal = egui::Modal::new(egui::Id::unique(("openpax_dialog", depth))).show(ctx, |ui| {
-            ui.set_width(DIALOG_WIDTH);
+            ui.set_width(match dialog {
+                Dialog::Remix(_) => WIDE_DIALOG_WIDTH,
+                Dialog::LoadDefault(_) => DIALOG_WIDTH + 80.0,
+                _ => DIALOG_WIDTH,
+            });
             done = match &mut dialog {
                 Dialog::NewPack {
                     name,
@@ -244,6 +253,8 @@ impl App {
                 }
                 Dialog::Resize { width, height } => self.resize_dialog(ui, width, height),
                 Dialog::ConfirmClose { ids, quit } => self.confirm_close_dialog(ui, ids, *quit),
+                Dialog::LoadDefault(state) => self.load_default_dialog(ui, state),
+                Dialog::Remix(state) => self.remix_dialog(ui, state),
             };
         });
         // Escape or a click outside cancels.
